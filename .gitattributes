@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.fmu binary
+*.slx binary
+*.mat binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
