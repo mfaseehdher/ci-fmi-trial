@@ -1,0 +1,24 @@
+{
+  "start": 0.0,
+  "stop": 0.3,
+  "dt": 0.1,
+  "components": {
+    "one": {"type": "const", "values": {"value": 1.0}},
+    "two": {"type": "const", "values": {"value": 2.0}},
+    "three": {"type": "const", "values": {"value": 3.0}},
+    "a": {"type": "fmu", "file": "fmus/network_adder_a.fmu", "same_time_evaluation": false},
+    "b": {"type": "fmu", "file": "fmus/network_adder_b.fmu", "same_time_evaluation": false},
+    "c": {"type": "fmu", "file": "fmus/network_adder_c.fmu", "same_time_evaluation": false},
+    "log": {"type": "logger", "file": "results/09_branch_and_merge.csv"}
+  },
+  "connections": [
+    {"src_comp": "two", "src_port": "value", "dst_comp": "a", "dst_port": "In1"},
+    {"src_comp": "one", "src_port": "value", "dst_comp": "a", "dst_port": "In2"},
+    {"src_comp": "two", "src_port": "value", "dst_comp": "b", "dst_port": "In1"},
+    {"src_comp": "three", "src_port": "value", "dst_comp": "b", "dst_port": "In2"},
+    {"src_comp": "a", "src_port": "Out", "dst_comp": "c", "dst_port": "In1"},
+    {"src_comp": "b", "src_port": "Out", "dst_comp": "c", "dst_port": "In2"},
+    {"src_comp": "c", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"}
+  ],
+  "expect": {"result":"pass","values":[8,8,8]}
+}

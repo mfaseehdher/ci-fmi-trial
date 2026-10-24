@@ -1,0 +1,28 @@
+{
+  "start": 0.0,
+  "stop": 0.4,
+  "dt": 0.1,
+  "components": {
+    "one": {"type": "const", "values": {"value": 1.0}},
+    "adder": {
+      "type": "fmu",
+      "file": "fmus/weighted_adder.fmu",
+      "parameters": {"FeedbackGain": 0.5},
+      "same_time_evaluation": false
+    },
+    "log": {"type": "logger", "file": "results/05_weighted_delayed_feedback.csv"}
+  },
+  "connections": [
+    {"src_comp": "one", "src_port": "value", "dst_comp": "adder", "dst_port": "Bias"},
+    {
+      "src_comp": "adder",
+      "src_port": "Out",
+      "dst_comp": "adder",
+      "dst_port": "Feedback",
+      "delayed": true,
+      "default": 0.0
+    },
+    {"src_comp": "adder", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"}
+  ],
+  "expect": {"result":"pass","values":[1,1.5,1.75,1.875]}
+}

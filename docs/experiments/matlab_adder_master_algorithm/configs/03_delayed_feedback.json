@@ -1,0 +1,27 @@
+{
+  "start": 0.0,
+  "stop": 0.4,
+  "dt": 0.1,
+  "components": {
+    "one": {"type": "const", "values": {"value": 1.0}},
+    "adder": {
+      "type": "fmu",
+      "file": "fmus/adder.fmu",
+      "same_time_evaluation": false
+    },
+    "log": {"type": "logger", "file": "results/03_delayed_feedback.csv"}
+  },
+  "connections": [
+    {"src_comp": "one", "src_port": "value", "dst_comp": "adder", "dst_port": "Inport"},
+    {
+      "src_comp": "adder",
+      "src_port": "Outport",
+      "dst_comp": "adder",
+      "dst_port": "Inport1",
+      "delayed": true,
+      "default": 0.0
+    },
+    {"src_comp": "adder", "src_port": "Outport", "dst_comp": "log", "dst_port": "sum"}
+  ],
+  "expect": {"result":"pass","values":[1,2,3,4]}
+}

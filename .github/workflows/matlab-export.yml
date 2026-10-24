@@ -1,0 +1,49 @@
+name: MATLAB FMU export and validation
+
+on:
+  push:
+    branches: [main, algebricloop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matlab:
+    name: Export MATLAB FMUs and references
+    runs-on: [self-hosted, Windows, X64, matlab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate FMUs and Simulink references
+        shell: powershell
+        run: |
+          $matlab = Join-Path $env:ProgramFiles 'MATLAB\R2026b\bin\matlab.exe'
+          if (-not (Test-Path -LiteralPath $matlab)) {
+            throw "MATLAB R2026b not found at $matlab"
+          }
+          if (-not $env:MW_MINGW64_LOC) {
+            $env:MW_MINGW64_LOC = 'D:\thesis\ci-fmi\docs\experiments\matlab_algebraic_adder_loops\build\toolchain\mingw64'
+          }
+          if (-not $env:MW_MINGW64_LOC -or
+              -not (Test-Path -LiteralPath (Join-Path $env:MW_MINGW64_LOC 'bin\gcc.exe'))) {
+            throw 'Set MW_MINGW64_LOC to the MinGW64 compiler directory on the runner.'
+          }
+          & $matlab -batch "mex -setup C; addpath(fullfile(pwd,'docs','experiments','matlab_adder_master_algorithm')); generate_artifacts"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matlab-fmus
+          path: docs/experiments/matlab_adder_master_algorithm/fmus/*.fmu
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matlab-references
+          path: docs/experiments/matlab_adder_master_algorithm/references/*.csv
+          if-no-files-found: error
+
+  validation:
+    name: Python FMU validation
+    needs: matlab
+    uses: ./.github/workflows/fmu-validation.yml
+    permissions:
+      contents: read

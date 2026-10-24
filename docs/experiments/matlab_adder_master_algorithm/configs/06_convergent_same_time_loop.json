@@ -1,0 +1,21 @@
+{
+  "start": 0.0,
+  "stop": 0.1,
+  "dt": 0.1,
+  "components": {
+    "one": {"type": "const", "values": {"value": 1.0}},
+    "adder": {
+      "type": "fmu",
+      "file": "fmus/weighted_adder.fmu",
+      "parameters": {"FeedbackGain": 0.5},
+      "same_time_evaluation": false
+    },
+    "log": {"type": "logger", "file": "results/06_convergent_same_time_loop.csv"}
+  },
+  "connections": [
+    {"src_comp": "one", "src_port": "value", "dst_comp": "adder", "dst_port": "Bias"},
+    {"src_comp": "adder", "src_port": "Out", "dst_comp": "adder", "dst_port": "Feedback"},
+    {"src_comp": "adder", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"}
+  ],
+  "expect": {"result":"rejected","error":"AlgebraicLoopError","reason_contains":"Cycle"}
+}
