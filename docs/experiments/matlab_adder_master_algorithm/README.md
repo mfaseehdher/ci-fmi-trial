@@ -51,7 +51,7 @@ python docs/experiments/matlab_adder_master_algorithm/run_experiments.py
 python docs/experiments/matlab_adder_master_algorithm/probe_same_time.py
 ```
 
-`generate_artifacts.m` recreates the models and exports the FMUs. It also
+`generate_artifacts.m` recreates eight models and exports their FMUs. It also
 simulates `adder.slx` and a separate `reference_feedback.slx` containing an
 explicit Unit Delay. The seven generated `references/*.csv` files are compared
 sample by sample with the master's CSVs and the expected hand-calculated

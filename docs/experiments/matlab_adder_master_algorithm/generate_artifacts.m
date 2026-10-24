@@ -6,5 +6,6 @@ addpath(experiment_dir);
 create_and_export_adder();
 create_and_export_weighted_adder();
 create_and_export_network_adders();
+create_and_export_loop_adders();
 generate_reference_traces();
 end
