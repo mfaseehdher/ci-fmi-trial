@@ -1,5 +1,5 @@
 function generate_artifacts()
-% Build the FMUs and independent Simulink reference traces for this experiment.
+% Build shared FMUs and Simulink reference traces for the adder experiments.
 
 experiment_dir = fileparts(mfilename('fullpath'));
 addpath(experiment_dir);

@@ -11,7 +11,7 @@ from fmpy import extract, read_model_description
 from fmpy.fmi2 import FMU2Slave
 
 
-EXPERIMENT = Path(__file__).resolve().parent
+EXPERIMENT = Path(__file__).resolve().parent.parent
 FMUS = EXPERIMENT / "fmus"
 
 

@@ -1,7 +1,8 @@
-"""Run each MATLAB FMU case separately and check its declared outcome."""
+"""Run one or all MATLAB FMU experiments and check the observed outcomes."""
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import math
@@ -31,7 +32,8 @@ def check_case(path: Path) -> dict[str, object]:
         if line.startswith(MARKER)
     ]
     result = json.loads(markers[0]) if len(markers) == 1 else None
-    report: dict[str, object] = {"case": path.stem, "status": "FAIL"}
+    case_name = path.parent.name
+    report: dict[str, object] = {"case": case_name, "status": "FAIL"}
 
     if result is None:
         report["reason"] = "Worker did not return a structured result"
@@ -58,7 +60,7 @@ def check_case(path: Path) -> dict[str, object]:
                     rows = list(csv.DictReader(handle))
                 actual = [float(row["sum"]) for row in rows]
                 values = expected["values"]
-                reference = EXPERIMENT / "references" / f"{path.stem}.csv"
+                reference = EXPERIMENT / "references" / f"{case_name}.csv"
                 if not reference.is_file():
                     report["reason"] = f"Missing MATLAB reference: {reference}"
                 else:
@@ -90,10 +92,18 @@ def check_case(path: Path) -> dict[str, object]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("case", nargs="?", help="Experiment folder name; omit to run all")
+    args = parser.parse_args()
+
+    paths = sorted(EXPERIMENT.glob("*/case.json"))
+    if args.case:
+        paths = [path for path in paths if path.parent.name == args.case]
+    if not paths:
+        raise ValueError(f"No experiment configuration found for {args.case!r}")
+
     RESULTS.mkdir(exist_ok=True)
-    reports = [check_case(path) for path in sorted((EXPERIMENT / "configs").glob("*.json"))]
-    if not reports:
-        raise RuntimeError("No experiment configurations found")
+    reports = [check_case(path) for path in paths]
 
     (RESULTS / "summary.json").write_text(
         json.dumps(reports, indent=2) + "\n", encoding="utf-8"

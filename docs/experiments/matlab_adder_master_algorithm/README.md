@@ -1,86 +1,25 @@
-# MATLAB adder FMUs: Stage 1 validation
+# MATLAB adder experiments
 
-This experiment checks the master algorithm after adding same-time cycle
-detection and an initial fixed-point solver, but before adding FMU rollback.
-All integration FMUs are generated from the Simulink models in `models/`.
-The Python-only tests in `tests/test_stage1.py` check the solver logic; they
-are not evidence that a MATLAB FMU can be evaluated without stepping.
+Each numbered folder is one experiment. Its README explains the goal, the connections, how it was checked, and the result. Its `case.json` contains the master's input settings.
 
-## Cases
+| Experiment | Result |
+| --- | --- |
+| [01 Two inputs](01_two_inputs/) | 5, 5, 5 |
+| [02 One value to two inputs](02_fan_out/) | 4, 4, 4 |
+| [03 Delayed feedback](03_delayed_feedback/) | 1, 2, 3, 4 |
+| [04 Same-time self-loop](04_same_time_loop/) | Rejected |
+| [05 Weighted delayed feedback](05_weighted_delayed_feedback/) | 1, 1.5, 1.75, 1.875 |
+| [06 Solvable same-time self-loop](06_convergent_same_time_loop/) | Rejected |
+| [07 Higher-gain same-time self-loop](07_divergent_same_time_loop/) | Rejected before iteration |
+| [08 Two-FMU chain](08_two_fmu_chain/) | 9, 9, 9 |
+| [09 Branch and merge](09_branch_and_merge/) | 8, 8, 8 |
+| [10 Two-FMU delayed feedback](10_two_fmu_delayed_loop/) | 3, 6, 9, 12 |
+| [11 Two-FMU same-time loop](11_two_fmu_same_time_loop/) | Rejected |
+| [12 Unsuitable time step](12_incompatible_step/) | Rejected |
+| [13 Output timing probe](13_same_time_output_probe/) | Output changed only after a time step |
 
-| Config | What it checks | Expected in Stage 1 |
-| --- | --- | --- |
-| `01_two_inputs` | One adder, two constant inputs | 5 at each step |
-| `02_fan_out` | One source drives two adder inputs | 4 at each step |
-| `03_delayed_feedback` | Feedback explicitly uses the previous output | 1, 2, 3, 4 |
-| `04_same_time_loop` | Feedback uses the current output | Reject without changing the link to delayed |
-| `05_weighted_delayed_feedback` | Explicit delay with gain 0.5 | 1, 1.5, 1.75, 1.875 |
-| `06_convergent_same_time_loop` | A mathematical fixed point exists | Reject: this FMU cannot be evaluated at the same time without a step |
-| `07_divergent_same_time_loop` | Loop gain does not support simple fixed-point convergence | Reject for the same FMU limitation, before testing convergence |
-| `08_two_fmu_chain` | Data passes from one FMU to another | 9 at each step |
-| `09_branch_and_merge` | Several source paths reach one adder | 8 at each step |
-| `10_two_fmu_delayed_loop` | Two FMUs with an explicit one-step delay | 3, 6, 9, 12 |
-| `11_two_fmu_same_time_loop` | Two FMUs depend on one another in the current step | Reject without inserting a delay |
-| `12_incompatible_step` | Requested step conflicts with the FMU's compiled step | Reject with a step-size error |
+## How to run them
 
-The acceptance criterion is **7 passing cases and 5 expected rejections**.
-An expected rejection is not a solved algebraic loop. In particular, the
-two-FMU same-time case is the one to revisit when FMU state restoration is
-implemented in Stage 2. Its equations are `a = 1 + 0.5*b` and `b = 0.2*a`,
-so a future successful result should be `a = 1/0.9` and `b = 0.2/0.9`.
+In MATLAB, run [generate_artifacts.m](generate_artifacts.m) to make the FMUs and reference files. Then run [run_experiments.py](run_experiments.py) with Python to check experiments 01-12. Run [probe_same_time.py](13_same_time_output_probe/probe_same_time.py) separately for experiment 13. The [GitHub workflow](https://github.com/mfaseehdher/ci-fmi-trial/actions/workflows/matlab-export.yml) runs these steps automatically.
 
-The `probe_same_time.py` check is important: changing a MATLAB FMU input
-leaves its output at 0 until `doStep` is called; then the output becomes 2.
-The R2026b FMUs used locally advertise `canGetAndSetFMUstate=true`, but that
-does not make their outputs immediately evaluable. Stage 1 deliberately
-refuses to iterate them with `doStep` because doing so repeatedly without
-restoring state would advance simulation time during a single loop solve.
-
-## Run locally
-
-Requirements: MATLAB R2026b with Simulink and FMU Builder support, a supported
-C compiler for FMU export, and Python 3.13 with FMPy, NetworkX, and pytest.
-From the repository root on Windows:
-
-```powershell
-$env:MW_MINGW64_LOC = 'PATH_TO_YOUR_MINGW64_DIRECTORY'
-& "$env:ProgramFiles\MATLAB\R2026b\bin\matlab.exe" -batch "mex -setup C; addpath(fullfile(pwd,'docs','experiments','matlab_adder_master_algorithm')); generate_artifacts"
-python -m pip install fmpy==0.3.26 networkx==3.6.1 pytest==8.4.2
-python -m pytest tests -q
-python docs/experiments/matlab_adder_master_algorithm/run_experiments.py
-python docs/experiments/matlab_adder_master_algorithm/probe_same_time.py
-```
-
-`generate_artifacts.m` recreates eight models and exports their FMUs. It also
-simulates `adder.slx` and a separate `reference_feedback.slx` containing an
-explicit Unit Delay. The seven generated `references/*.csv` files are compared
-sample by sample with the master's CSVs and the expected hand-calculated
-values. These references are for the passing cases only; rejected loops have
-no simulated reference claim in Stage 1. The runner records each case in
-`results/summary.json` and `results/summary.md`, and the probe writes
-`results/same_time_probe.json`. Generated FMUs, references, and results are
-not source files to commit.
-
-## GitHub Actions
-
-`matlab-export.yml` uses the `matlab`-labelled self-hosted Windows runner to
-export the FMUs and Simulink references. It uploads them as workflow artifacts.
-On this trial machine, it uses the already installed MinGW64 directory if
-`MW_MINGW64_LOC` is unset; another runner must set that variable itself.
-`fmu-validation.yml` downloads those artifacts on a GitHub-hosted Windows
-runner, runs the tests and cases, and uploads the results. The self-hosted
-job is triggered only by trusted branch pushes or manual dispatch, not pull
-requests. The [initial Stage 1 run](https://github.com/mfaseehdher/ci-fmi-trial/actions/runs/40189401947)
-completed successfully on GitHub. Check the run for each later commit too;
-its successful status counts expected rejections as correct outcomes, not as
-algebraic loops solved by MATLAB FMUs.
-
-## Traceability and AI use
-
-This GitHub repository is a trial. The related thesis weekly update belongs
-in the university [GitLab weekly-report directory](https://cosysgit.uantwerpen.be/BAMA/ci-fmi/-/tree/main/docs/weeklies),
-with an explicit link back to this experiment and its CI run. This Stage 1
-experiment, scripts, solver code, and CI workflow were prepared with ChatGPT
-Codex assistance under Muhammad Fasih's direction. The student should review
-the models, explain the 7/5 outcomes, and rerun the commands before presenting
-the result as thesis evidence.
+Seven cases match their expected numbers. Four same-time loops are detected but rejected because these MATLAB FMUs update their outputs only after a time step; **they are not solved**. One case is rejected for an unsuitable time step. The separate probe measures the output behavior. Generated FMUs, references, and results are not stored in Git.

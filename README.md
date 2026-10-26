@@ -16,13 +16,14 @@ a loop and tries fixed-point iteration only when their current outputs can be
 evaluated without advancing time. It does not restore FMU state or repeatedly
 call `doStep` during iteration.
 
-The [MATLAB adder experiment](docs/experiments/matlab_adder_master_algorithm/README.md)
-builds FMUs with Simulink and runs 12 cases. The expected Stage 1 outcome is
-seven numerical passes and five deliberate rejections. Four rejected cases
-contain same-time loops that the MATLAB Co-Simulation FMUs cannot evaluate
-without `doStep`; the fifth uses an incompatible step size. The Python unit
-tests exercise the fixed-point solver separately. A successful workflow does
-not mean that Stage 1 solves algebraic loops between these MATLAB FMUs.
+The [MATLAB adder experiments](docs/experiments/matlab_adder_master_algorithm/README.md)
+are documented in separate folders. The 12 configured runs produced seven
+numerical passes and five deliberate rejections; a separate probe measured
+when an FMU updates its output. Four rejected cases contain same-time loops
+that these MATLAB Co-Simulation FMUs cannot evaluate without `doStep`; the
+fifth uses an incompatible step size. The Python unit tests exercise the
+fixed-point solver separately. A successful workflow does not mean that
+Stage 1 solves algebraic loops between these MATLAB FMUs.
 
 The [GitHub Actions workflow](https://github.com/mfaseehdher/ci-fmi-trial/actions)
 exports the FMUs and reference traces on the MATLAB runner, then validates

@@ -31,7 +31,7 @@ jobs:
         run: python docs/experiments/matlab_adder_master_algorithm/run_experiments.py
       - name: Same-time FMU probe
         if: always()
-        run: python docs/experiments/matlab_adder_master_algorithm/probe_same_time.py
+        run: python docs/experiments/matlab_adder_master_algorithm/13_same_time_output_probe/probe_same_time.py
       - name: Add case table to job summary
         if: always()
         shell: powershell
