@@ -70,8 +70,10 @@ On this trial machine, it uses the already installed MinGW64 directory if
 `fmu-validation.yml` downloads those artifacts on a GitHub-hosted Windows
 runner, runs the tests and cases, and uploads the results. The self-hosted
 job is triggered only by trusted branch pushes or manual dispatch, not pull
-requests. The local validation passed; a GitHub Actions run must still be
-checked after this branch is pushed.
+requests. The [initial Stage 1 run](https://github.com/mfaseehdher/ci-fmi-trial/actions/runs/40189401947)
+completed successfully on GitHub. Check the run for each later commit too;
+its successful status counts expected rejections as correct outcomes, not as
+algebraic loops solved by MATLAB FMUs.
 
 ## Traceability and AI use
 

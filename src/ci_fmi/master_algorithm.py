@@ -1,5 +1,5 @@
 """
-generic.py  —  FMI 2.0 co-simulation master algorithm
+master_algorithm.py  —  FMI 2.0 co-simulation master algorithm
 Usage: python master_algorithm.py <case.json>
 
 This stage solves same-time loops only when outputs can be evaluated without
@@ -796,7 +796,7 @@ def run_case(cfg: Dict[str, Any]) -> None:
 
     automatic_plan = build_execution_plan(components, connections)
 
-    # A manual order remains valid for an acyclic legacy experiment. It cannot
+    # A manual order remains valid for an acyclic older experiment. It cannot
     # override an algebraic loop because no linear order can solve that loop.
     if "step_order" in cfg:
         step_order = cfg["step_order"]
