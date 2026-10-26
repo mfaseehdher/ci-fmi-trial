@@ -1,6 +1,6 @@
 """
-generic.py  —  FMI 2.0 co-simulation master algorithm
-Usage: python generic.py <case.json>
+master_algorithm.py  —  FMI 2.0 co-simulation master algorithm
+Usage: python master_algorithm.py <case.json>
 
 Key feature: automatic sub-stepping for fixed-step MATLAB/Simulink FMUs.
 The FMU's compiled step size is read from DefaultExperiment.stepSize and used
@@ -866,6 +866,6 @@ def _cast(value: str) -> Any:
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python generic.py <case.json>")
+        print("Usage: python master_algorithm.py <case.json>")
         sys.exit(1)
     run_case(load_config(sys.argv[1]))

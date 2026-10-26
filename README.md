@@ -1,16 +1,28 @@
-# FMI master algorithm trial
+# FMI co-simulation master algorithm
 
-This is a GitHub trial for the thesis master algorithm. It is not a copy of the
-supervisor's GitLab repository. Only the paths needed for the prototype and its
-experiments are mirrored, so reviewed changes can later be transferred to GitLab.
+This repository is a trial for continuing my MSc thesis work. The project I
+presented at my thesis defense is [Ci-FMI](https://github.com/mfaseehdher/Ci-FMI).
+The starting algorithm on this `stage-0` branch comes from
+[that repository's `generic.py` at its initial commit](https://github.com/mfaseehdher/Ci-FMI/blob/ea27bce21f/generic.py).
+I placed it at `src/ci_fmi/master_algorithm.py` so the later stages can be
+compared at one path. Apart from the filename and printed usage text, this
+stage does not change that algorithm. It is not a copy of every later change
+on Ci-FMI's `main` branch.
 
-- `src/ci_fmi/`: master algorithm code and the unchanged legacy reference.
-- `docs/experiments/`: one folder per MATLAB/Simulink FMU experiment, each with
-  its model, scripts, configuration, results description, and AI-use record.
+## Starting behavior
 
-The planned review sequence is `stage-0` (legacy reference), `algebricloop`
-(same-time loop detection and no-rollback behavior), then `rollback` (FMU state
-restoration). Each branch is reviewed before the next stage starts. No experiment
-result is claimed until its commands and CI job have run successfully.
+The algorithm reads a JSON configuration, steps connected FMI 2.0
+Co-Simulation FMUs, and derives an execution order. When it finds a cycle, it
+automatically marks one connection as delayed. That permits a simulation to
+run, but it changes a same-time dependency into previous-step feedback; it
+does not solve an algebraic loop at the current time.
 
-Weekly reports and other thesis documentation remain in the GitLab repository.
+This branch has no new experiments. The `algebricloop` branch changes the
+same module to detect same-time loops and adds MATLAB-FMU experiments. FMU
+state restoration is reserved for a later `rollback` stage. The branches
+remain available so each change can be reviewed separately.
+
+This trial is separate from the [university GitLab repository](https://cosysgit.uantwerpen.be/BAMA/ci-fmi),
+where the weekly thesis reports belong. ChatGPT Codex assisted with this trial
+repository's organization and documentation; the starting algorithm comes
+from the linked Ci-FMI source.
