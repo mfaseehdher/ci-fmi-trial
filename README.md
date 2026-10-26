@@ -22,7 +22,3 @@ same module to detect same-time loops and adds MATLAB-FMU experiments. FMU
 state restoration is reserved for a later `rollback` stage. The branches
 remain available so each change can be reviewed separately.
 
-This trial is separate from the [university GitLab repository](https://cosysgit.uantwerpen.be/BAMA/ci-fmi),
-where the weekly thesis reports belong. ChatGPT Codex assisted with this trial
-repository's organization and documentation; the starting algorithm comes
-from the linked Ci-FMI source.
