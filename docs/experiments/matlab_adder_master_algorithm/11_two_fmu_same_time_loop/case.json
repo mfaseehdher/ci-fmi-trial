@@ -1,0 +1,20 @@
+{
+  "start": 0.0,
+  "stop": 0.1,
+  "dt": 0.1,
+  "components": {
+    "one": {"type": "const", "values": {"value": 1.0}},
+    "zero": {"type": "const", "values": {"value": 0.0}},
+    "a": {"type": "fmu", "file": "fmus/loop_adder_a.fmu", "same_time_evaluation": false},
+    "b": {"type": "fmu", "file": "fmus/loop_adder_b.fmu", "same_time_evaluation": false},
+    "log": {"type": "logger", "file": "results/11_two_fmu_same_time_loop.csv"}
+  },
+  "connections": [
+    {"src_comp": "one", "src_port": "value", "dst_comp": "a", "dst_port": "Bias"},
+    {"src_comp": "b", "src_port": "Out", "dst_comp": "a", "dst_port": "Feedback"},
+    {"src_comp": "zero", "src_port": "value", "dst_comp": "b", "dst_port": "Bias"},
+    {"src_comp": "a", "src_port": "Out", "dst_comp": "b", "dst_port": "Feedback"},
+    {"src_comp": "b", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"}
+  ],
+  "expect": {"result":"rejected","error":"AlgebraicLoopError","reason_contains":"Cycle"}
+}

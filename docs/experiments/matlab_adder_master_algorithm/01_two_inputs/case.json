@@ -1,0 +1,21 @@
+{
+  "start": 0.0,
+  "stop": 0.3,
+  "dt": 0.1,
+  "components": {
+    "two": {"type": "const", "values": {"value": 2.0}},
+    "three": {"type": "const", "values": {"value": 3.0}},
+    "adder": {
+      "type": "fmu",
+      "file": "fmus/adder.fmu",
+      "same_time_evaluation": false
+    },
+    "log": {"type": "logger", "file": "results/01_two_inputs.csv"}
+  },
+  "connections": [
+    {"src_comp": "two", "src_port": "value", "dst_comp": "adder", "dst_port": "Inport"},
+    {"src_comp": "three", "src_port": "value", "dst_comp": "adder", "dst_port": "Inport1"},
+    {"src_comp": "adder", "src_port": "Outport", "dst_comp": "log", "dst_port": "sum"}
+  ],
+  "expect": {"result":"pass","values":[5,5,5]}
+}

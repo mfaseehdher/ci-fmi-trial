@@ -1,0 +1,48 @@
+name: Python FMU validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install test dependencies
+        run: python -m pip install fmpy==0.3.26 networkx==3.6.1 pytest==8.4.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: matlab-fmus
+          path: docs/experiments/matlab_adder_master_algorithm/fmus
+      - uses: actions/download-artifact@v4
+        with:
+          name: matlab-references
+          path: docs/experiments/matlab_adder_master_algorithm/references
+      - name: Unit tests
+        run: python -m pytest tests -q
+      - name: MATLAB FMU cases
+        if: always()
+        run: python docs/experiments/matlab_adder_master_algorithm/run_experiments.py
+      - name: Same-time FMU probe
+        if: always()
+        run: python docs/experiments/matlab_adder_master_algorithm/13_same_time_output_probe/probe_same_time.py
+      - name: Add case table to job summary
+        if: always()
+        shell: powershell
+        run: |
+          $path = 'docs/experiments/matlab_adder_master_algorithm/results/summary.md'
+          if (Test-Path -LiteralPath $path) {
+            Get-Content -LiteralPath $path | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-results
+          path: docs/experiments/matlab_adder_master_algorithm/results/
+          if-no-files-found: warn

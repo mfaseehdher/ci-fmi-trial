@@ -1,24 +1,21 @@
 # FMI co-simulation master algorithm
 
-This repository is a trial for continuing my MSc thesis work. The project I
-presented at my thesis defense is [Ci-FMI](https://github.com/mfaseehdher/Ci-FMI).
-The starting algorithm on this `stage-0` branch comes from
-[that repository's `generic.py` at its initial commit](https://github.com/mfaseehdher/Ci-FMI/blob/ea27bce21f/generic.py).
-I placed it at `src/ci_fmi/master_algorithm.py` so the later stages can be
-compared at one path. Apart from the filename and printed usage text, this
-stage does not change that algorithm. It is not a copy of every later change
-on Ci-FMI's `main` branch.
+This repository is a trial workspace for developing a Python master algorithm
+that connects and runs FMI Co-Simulation FMUs. It builds on `generic.py` from
+[Ci-FMI](https://github.com/mfaseehdher/Ci-FMI), my earlier thesis repository.
 
-## Starting behavior
+The [stage-0 branch](https://github.com/mfaseehdher/ci-fmi-trial/tree/stage-0)
+records that starting algorithm. The `algebricloop` stage detects same-time
+loops instead of automatically delaying a connection. It can iterate a loop
+when component outputs update without advancing time; it does not yet solve
+same-time loops with the MATLAB FMUs used here.
 
-The algorithm reads a JSON configuration, steps connected FMI 2.0
-Co-Simulation FMUs, and derives an execution order. When it finds a cycle, it
-automatically marks one connection as delayed. That permits a simulation to
-run, but it changes a same-time dependency into previous-step feedback; it
-does not solve an algebraic loop at the current time.
+The master algorithm is in [`src/ci_fmi/`](src/ci_fmi/). Python tests are in
+[`tests/`](tests/). MATLAB models, case configurations, and individual results
+are in [the experiment folders](docs/experiments/matlab_adder_master_algorithm/).
 
-This branch has no new experiments. The `algebricloop` branch changes the
-same module to detect same-time loops and adds MATLAB-FMU experiments. FMU
-state restoration is reserved for a later `rollback` stage. The branches
-remain available so each change can be reviewed separately.
+## Requirements
 
+- Python 3.13 with `fmpy` and `networkx`.
+- For the MATLAB FMU experiments: Windows, MATLAB with Simulink and
+  `exportToFMU2CS`, and a configured MinGW-w64 C compiler.
