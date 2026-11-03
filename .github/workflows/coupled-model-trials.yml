@@ -1,0 +1,94 @@
+name: Coupled controller-plant trials
+
+on:
+  push:
+    branches: [model-trials]
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: 'Space-separated case folder names; leave blank for all eight'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  matlab_export:
+    runs-on: [self-hosted, Windows, X64, matlab]
+    env:
+      CASE_SELECTION: ${{ inputs.cases }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export controller and plant FMUs and MATLAB references
+        shell: powershell
+        run: |
+          $matlab = Join-Path $env:ProgramFiles 'MATLAB\R2026b\bin\matlab.exe'
+          if (-not (Test-Path -LiteralPath $matlab)) { throw "MATLAB not found: $matlab" }
+          if (-not $env:MW_MINGW64_LOC) {
+            $env:MW_MINGW64_LOC = 'D:\thesis\ci-fmi\docs\experiments\matlab_algebraic_adder_loops\build\toolchain\mingw64'
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $env:MW_MINGW64_LOC 'bin\gcc.exe'))) {
+            throw 'Set MW_MINGW64_LOC to an installed MinGW64 compiler directory.'
+          }
+          $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $selected = @($env:CASE_SELECTION.Split(' ') | Where-Object { $_ })
+          py -3.13 docs/experiments/run_coupled_models.py build --run-id $runId --matlab $matlab @selected
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coupled-matlab-build
+          path: docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn
+
+  python_validation:
+    needs: matlab_export
+    runs-on: windows-latest
+    env:
+      CASE_SELECTION: ${{ inputs.cases }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: coupled-matlab-build
+          path: docs/experiments
+      - name: Run the master and compare with MATLAB
+        shell: powershell
+        run: |
+          python -m pip install fmpy==0.3.26 networkx==3.6.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $selected = @($env:CASE_SELECTION.Split(' ') | Where-Object { $_ })
+          python docs/experiments/run_coupled_models.py check --run-id $runId @selected
+          exit $LASTEXITCODE
+      - name: Summarize observations
+        if: always()
+        shell: powershell
+        run: |
+          $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $lines = @('## Coupled controller-plant trials', '', '| Case | Status | Signals (RMSE / max abs error) |', '| --- | --- | --- |')
+          Get-ChildItem docs/experiments -Directory | ForEach-Object {
+            $path = Join-Path $_.FullName "build/$runId/result.json"
+            if (-not (Test-Path -LiteralPath $path)) { return }
+            $result = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $metrics = @()
+            if ($result.metrics) {
+              $result.metrics.PSObject.Properties | ForEach-Object {
+                $metrics += "$($_.Name): $($_.Value.rmse) / $($_.Value.max_abs_error)"
+              }
+            }
+            $lines += "| $($result.experiment) | $($result.status) | $($metrics -join '; ') |"
+          }
+          $lines += ''
+          $lines += 'Compared means both traces were produced and error metrics calculated. It does not mean the error met a declared tolerance. These cases use intentional delayed feedback, not rollback.'
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coupled-comparison-results
+          path: docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn

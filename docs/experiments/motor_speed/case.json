@@ -1,0 +1,4 @@
+{
+  "model": "Motor_Model.slx",
+  "setup": "setup_motor_speed.m"
+}

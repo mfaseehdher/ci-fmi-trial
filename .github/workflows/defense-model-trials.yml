@@ -1,0 +1,82 @@
+name: Defense-model FMU trials
+
+on:
+  push:
+    branches: [model-trials]
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: 'Comma-separated experiment folders; leave blank for all'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  experiments:
+    runs-on: [self-hosted, Windows, X64, matlab]
+    env:
+      CASE_SELECTION: ${{ inputs.cases }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare local tools
+        shell: powershell
+        run: |
+          $matlab = Join-Path $env:ProgramFiles 'MATLAB\R2026b\bin\matlab.exe'
+          if (-not (Test-Path -LiteralPath $matlab)) { throw "MATLAB not found: $matlab" }
+          if (-not $env:MW_MINGW64_LOC) {
+            $env:MW_MINGW64_LOC = 'D:\thesis\ci-fmi\docs\experiments\matlab_algebraic_adder_loops\build\toolchain\mingw64'
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $env:MW_MINGW64_LOC 'bin\gcc.exe'))) {
+            throw 'Set MW_MINGW64_LOC to an installed MinGW64 compiler directory.'
+          }
+          "MW_MINGW64_LOC=$env:MW_MINGW64_LOC" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $python = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'
+          if (-not (Test-Path -LiteralPath $python)) { throw "Python 3.13 not found: $python" }
+          "TRIAL_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Append
+          & $python -m pip install fmpy==0.3.26 networkx==3.6.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare, export, run, and compare
+        shell: powershell
+        run: |
+          $matlab = Join-Path $env:ProgramFiles 'MATLAB\R2026b\bin\matlab.exe'
+          $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $selected = @()
+          if ($env:CASE_SELECTION) {
+            $selected = @($env:CASE_SELECTION.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          }
+          & $env:TRIAL_PYTHON docs/experiments/run_defense_models.py --run-id $runId --matlab $matlab -- @selected
+          exit $LASTEXITCODE
+      - name: Summarize observed results
+        if: always()
+        shell: powershell
+        run: |
+          $lines = @('## Defense-model trials', '', '| Experiment | Status | RMSE | Max absolute difference |', '| --- | --- | ---: | ---: |')
+          $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $cases = Get-ChildItem docs/experiments -Directory
+          foreach ($case in $cases) {
+            $path = Join-Path $case.FullName "build/$runId/result.json"
+            if (-not (Test-Path -LiteralPath $path)) { continue }
+            $result = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $rmse = if ($result.comparison) { [string]$result.comparison.rmse } else { '-' }
+            $maximum = if ($result.comparison) { [string]$result.comparison.max_abs_error } else { '-' }
+            $lines += "| $($result.experiment) | $($result.status) | $rmse | $maximum |"
+          }
+          $lines += ''
+          $lines += 'Compared means a trace comparison was produced; it does not mean the errors met an acceptance threshold. Blocked cases keep their detailed MATLAB status and logs in the artifact.'
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: defense-model-trial-results
+          path: |
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/result.json
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/matlab_status.json
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/matlab.log
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/*.fmu
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/generated_case.json
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/stimulus.csv
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/*_ref.csv
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/master_output.csv
+          if-no-files-found: warn

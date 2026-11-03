@@ -1,0 +1,4 @@
+{
+  "model": "Motor_Pos.slx",
+  "setup": "setup_motor_position.m"
+}

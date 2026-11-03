@@ -1,0 +1,4 @@
+{
+  "model": "aircraft_pitch_control.slx",
+  "setup": "setup_working.m"
+}

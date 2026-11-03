@@ -1,0 +1,4 @@
+{
+  "model": "train.slx",
+  "setup": "setup_toy_train.m"
+}

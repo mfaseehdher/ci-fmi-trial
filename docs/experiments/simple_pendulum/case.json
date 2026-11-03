@@ -1,0 +1,4 @@
+{
+  "model": "pendulumSIM.slx",
+  "setup": "setup_simple_pendulum.m"
+}
