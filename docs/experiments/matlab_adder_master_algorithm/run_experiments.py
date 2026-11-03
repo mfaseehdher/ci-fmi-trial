@@ -58,27 +58,56 @@ def check_case(path: Path) -> dict[str, object]:
             else:
                 with output.open(newline="", encoding="utf-8") as handle:
                     rows = list(csv.DictReader(handle))
-                actual = [float(row["sum"]) for row in rows]
-                values = expected["values"]
+                columns = expected.get("outputs", {"sum": expected.get("values", [])})
+                tolerance = float(expected.get("tolerance", 1e-8))
+                reference_kind = expected.get("reference", "matlab")
                 reference = EXPERIMENT / "references" / f"{case_name}.csv"
-                if not reference.is_file():
+                if reference_kind == "matlab" and not reference.is_file():
                     report["reason"] = f"Missing MATLAB reference: {reference}"
+                elif reference_kind not in ("matlab", "analytical"):
+                    report["reason"] = f"Unknown reference type {reference_kind!r}"
                 else:
-                    with reference.open(newline="", encoding="utf-8") as handle:
-                        reference_rows = list(csv.DictReader(handle))
-                    matches = (
-                        len(rows) == len(values) == len(reference_rows)
-                        and all(
-                            math.isclose(float(row["time"]), float(ref["time"]), rel_tol=0, abs_tol=1e-9)
-                            and math.isclose(float(row["sum"]), float(ref["sum"]), rel_tol=0, abs_tol=1e-8)
-                            and math.isclose(float(row["sum"]), target, rel_tol=0, abs_tol=1e-8)
-                            for row, ref, target in zip(rows, reference_rows, values)
-                        )
-                    )
-                    if matches:
-                        report.update(status="PASS", values=actual)
+                    if reference_kind == "matlab":
+                        with reference.open(newline="", encoding="utf-8") as handle:
+                            reference_rows = list(csv.DictReader(handle))
                     else:
-                        report["reason"] = f"Master {actual}, MATLAB reference {[row['sum'] for row in reference_rows]}, expected {values}"
+                        reference_rows = None
+                    matches = bool(rows) and all(
+                        len(rows) == len(targets) for targets in columns.values()
+                    )
+                    if reference_rows is not None:
+                        matches = matches and len(rows) == len(reference_rows)
+                    for index, row in enumerate(rows):
+                        expected_time = float(config.get("start", 0.0)) + (index + 1) * float(config["dt"])
+                        matches = matches and math.isclose(
+                            float(row["time"]), expected_time, rel_tol=0, abs_tol=1e-9
+                        )
+                        for column, targets in columns.items():
+                            if column not in row or index >= len(targets):
+                                matches = False
+                                continue
+                            actual = float(row[column])
+                            matches = matches and math.isfinite(actual) and math.isclose(
+                                actual, float(targets[index]), rel_tol=0, abs_tol=tolerance
+                            )
+                            if reference_rows is not None and index < len(reference_rows):
+                                ref = reference_rows[index]
+                                matches = matches and math.isclose(
+                                    float(row["time"]), float(ref["time"]),
+                                    rel_tol=0, abs_tol=1e-9,
+                                ) and column in ref and math.isclose(
+                                    actual, float(ref[column]), rel_tol=0, abs_tol=tolerance
+                                )
+                    if matches:
+                        report.update(status="PASS", values={
+                            column: [float(row[column]) for row in rows]
+                            for column in columns
+                        })
+                    else:
+                        report["reason"] = (
+                            f"Master rows {rows}, reference {reference_rows}, "
+                            f"expected {columns} (tolerance {tolerance})"
+                        )
     else:
         report["reason"] = f"Unknown expectation {expected['result']!r}"
 

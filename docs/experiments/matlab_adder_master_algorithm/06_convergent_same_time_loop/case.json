@@ -17,5 +17,5 @@
     {"src_comp": "adder", "src_port": "Out", "dst_comp": "adder", "dst_port": "Feedback"},
     {"src_comp": "adder", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"}
   ],
-  "expect": {"result":"rejected","error":"AlgebraicLoopError","reason_contains":"Cycle"}
+  "expect": {"result":"pass","values":[2.0],"reference":"analytical","tolerance":1e-6}
 }

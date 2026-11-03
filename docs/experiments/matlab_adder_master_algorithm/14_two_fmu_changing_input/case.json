@@ -1,0 +1,29 @@
+{
+  "start": 0.0,
+  "stop": 0.3,
+  "dt": 0.1,
+  "components": {
+    "bias": {"type": "step", "ports": {"value": {"initial": 1.0, "step": 2.0, "step_time": 0.2}}},
+    "zero": {"type": "const", "values": {"value": 0.0}},
+    "a": {"type": "fmu", "file": "fmus/loop_adder_a.fmu", "same_time_evaluation": false},
+    "b": {"type": "fmu", "file": "fmus/loop_adder_b.fmu", "same_time_evaluation": false},
+    "log": {"type": "logger", "file": "results/14_two_fmu_changing_input.csv"}
+  },
+  "connections": [
+    {"src_comp": "bias", "src_port": "value", "dst_comp": "a", "dst_port": "Bias"},
+    {"src_comp": "b", "src_port": "Out", "dst_comp": "a", "dst_port": "Feedback"},
+    {"src_comp": "zero", "src_port": "value", "dst_comp": "b", "dst_port": "Bias"},
+    {"src_comp": "a", "src_port": "Out", "dst_comp": "b", "dst_port": "Feedback"},
+    {"src_comp": "b", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"},
+    {"src_comp": "a", "src_port": "Out", "dst_comp": "log", "dst_port": "a"}
+  ],
+  "expect": {
+    "result": "pass",
+    "outputs": {
+      "a": [1.1111111111111112, 1.1111111111111112, 2.2222222222222223],
+      "sum": [0.2222222222222222, 0.2222222222222222, 0.4444444444444444]
+    },
+    "reference": "analytical",
+    "tolerance": 1e-6
+  }
+}

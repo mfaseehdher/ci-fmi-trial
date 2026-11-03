@@ -2,8 +2,8 @@
 master_algorithm.py  —  FMI 2.0 co-simulation master algorithm
 Usage: python master_algorithm.py <case.json>
 
-This stage solves same-time loops only when outputs can be evaluated without
-calling doStep during iteration. It does not implement FMU state rollback.
+Same-time loops can use output evaluation without doStep, or FMU state
+restoration between trial steps when every member supports rollback.
 
 Key feature: automatic sub-stepping for fixed-step MATLAB/Simulink FMUs.
 The FMU's compiled step size is read from DefaultExperiment.stepSize and used
@@ -304,7 +304,11 @@ class FMUComponent(Component):
         super().__init__(name)
         self.fmu_path = fmu_path
         self.same_time_evaluation = same_time_evaluation
+        self.supports_rollback = False
+        self.current_time: Optional[float] = None
+        self._trial_step = False
         self.fmu: Any = None
+        self._initialized = False
         self.vr:              Dict[str, int] = {}
         self.var_types:       Dict[str, str] = {}
         self.inputs_list:     List[str] = []
@@ -319,6 +323,9 @@ class FMUComponent(Component):
     def instantiate(self, start: float,
                     params: Optional[Dict[str, Any]] = None) -> None:
         md = read_model_description(self.fmu_path, validate=False)
+        if md.coSimulation is None:
+            raise ValueError(f"FMU '{self.name}' is not FMI 2.0 Co-Simulation")
+        self.supports_rollback = bool(md.coSimulation.canGetAndSetFMUstate)
         unzipdir = extract(self.fmu_path)
 
         # Read the FMU's compiled fixed step size
@@ -390,6 +397,10 @@ class FMUComponent(Component):
                 self._fmu_set(k, v)
 
         self.fmu.exitInitializationMode()
+        self._initialized = True
+        self.current_time = start
+        for key in self.outputs_list:
+            self.outputs[key] = self._fmu_get(key)
 
     def configure_stepping(self, comm_dt: float) -> None:
         """
@@ -430,8 +441,12 @@ class FMUComponent(Component):
         # Sub-step loop
         t_local = t
         for _ in range(self._n_sub):
-            self.fmu.doStep(t_local, self._h)
+            self.fmu.doStep(
+                t_local, self._h,
+                noSetFMUStatePriorToCurrentPoint=not self._trial_step,
+            )
             t_local = round(t_local + self._h, 12)
+        self.current_time = round(t + dt, 12)
 
         # Read outputs after the full communication step
         for k in self.outputs_list:
@@ -451,6 +466,30 @@ class FMUComponent(Component):
         if dependencies is None:
             return None
         return input_name in dependencies
+
+    def save_state(self) -> Tuple[Any, float, Dict[str, Any], Dict[str, Any]]:
+        if not self.supports_rollback or self.current_time is None:
+            raise AlgebraicLoopError(f"FMU '{self.name}' cannot save/restore state")
+        return (
+            self.fmu.getFMUstate(), self.current_time,
+            dict(self.inputs), dict(self.outputs),
+        )
+
+    def restore_state(self, snapshot: Tuple[Any, float, Dict[str, Any], Dict[str, Any]]) -> None:
+        self.fmu.setFMUstate(snapshot[0])
+        self.current_time = snapshot[1]
+        self.inputs = dict(snapshot[2])
+        self.outputs = dict(snapshot[3])
+
+    def free_state(self, snapshot: Tuple[Any, float, Dict[str, Any], Dict[str, Any]]) -> None:
+        self.fmu.freeFMUstate(snapshot[0])
+
+    def trial_step(self, t: float, dt: float) -> None:
+        self._trial_step = True
+        try:
+            self.do_step(t, dt)
+        finally:
+            self._trial_step = False
 
     def list_ports(self) -> Dict[str, List[str]]:
         return {
@@ -486,8 +525,17 @@ class FMUComponent(Component):
 
     def terminate(self) -> None:
         if self.fmu is not None:
-            self.fmu.terminate()
-            self.fmu.freeInstance()
+            instantiated = bool(getattr(self.fmu, "component", None))
+            try:
+                if instantiated and self._initialized:
+                    self.fmu.terminate()
+            finally:
+                if instantiated:
+                    self.fmu.freeInstance()
+                else:
+                    self.fmu.freeLibrary()
+                self.fmu = None
+                self._initialized = False
 
 
 # ──────────────────────────────────────────────────────────────
@@ -665,17 +713,23 @@ def build_execution_plan(
                 + " contains a time-advancing dependency and requires rollback. "
                   "Only pure direct-feedthrough loops are currently supported."
             )
-        if any(
-            isinstance(components[name], FMUComponent)
-            and not components[name].same_time_evaluation
-            for name in names
+        loop_components = [components[name] for name in names]
+        if all(getattr(comp, "supports_rollback", False) for comp in loop_components):
+            evaluation = "rollback_step"
+        elif all(
+            not isinstance(comp, FMUComponent) or comp.same_time_evaluation
+            for comp in loop_components
         ):
+            evaluation = "same_time"
+        else:
             raise AlgebraicLoopError(
-                "Cycle " + ", ".join(sorted(names))
-                + " requires verified same-time FMU output evaluation; "
-                  "rollback is not implemented in this version."
+                "Cycle " + ", ".join(sorted(names)) + " requires every FMU "
+                "to support rollback or verified same-time output evaluation."
             )
-        plan.append({"kind": "algebraic_loop", "components": sorted(names)})
+        plan.append({
+            "kind": "algebraic_loop", "components": sorted(names),
+            "evaluation": evaluation,
+        })
 
     return plan
 
@@ -745,6 +799,115 @@ def solve_algebraic_loop(
     )
 
 
+def solve_rollback_loop(
+    component_names: List[str],
+    components: Dict[str, Component],
+    connections: List[Dict[str, Any]],
+    t: float,
+    dt: float,
+    *,
+    absolute_tolerance: float = 1e-9,
+    relative_tolerance: float = 1e-7,
+    max_iterations: int = 50,
+    trace: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Restore t before each trial; leave the converged trial at t+dt."""
+    if (not math.isfinite(absolute_tolerance) or absolute_tolerance < 0
+            or not math.isfinite(relative_tolerance) or relative_tolerance < 0
+            or absolute_tolerance + relative_tolerance == 0
+            or max_iterations < 1):
+        raise ValueError("Loop tolerances must be finite/nonnegative and iterations positive")
+
+    names = set(component_names)
+    internal = [
+        connection for connection in connections
+        if not connection["delayed"]
+        and connection["src_comp"] in names
+        and connection["dst_comp"] in names
+    ]
+    previous = {
+        (connection["src_comp"], connection["src_port"]): float(
+            components[connection["src_comp"]].get_output(connection["src_port"])
+        )
+        for connection in internal
+    }
+    if not previous or any(not math.isfinite(value) for value in previous.values()):
+        raise AlgebraicLoopError("Loop has no finite initial output guesses")
+
+    snapshots: Dict[str, Any] = {}
+    accepted = False
+    try:
+        for name in component_names:
+            snapshots[name] = components[name].save_state()
+
+        for iteration in range(1, max_iterations + 1):
+            for name in component_names:
+                components[name].restore_state(snapshots[name])
+            for connection in internal:
+                key = (connection["src_comp"], connection["src_port"])
+                components[connection["dst_comp"]].set_input(
+                    connection["dst_port"], previous[key]
+                )
+
+            start_times = {name: components[name].current_time for name in component_names}
+            if any(not math.isclose(value, t, abs_tol=1e-12, rel_tol=0)
+                   for value in start_times.values()):
+                raise AlgebraicLoopError("Rollback did not restore the communication point")
+
+            for name in component_names:
+                components[name].trial_step(t, dt)
+            current = {
+                key: float(components[key[0]].get_output(key[1]))
+                for key in previous
+            }
+            if any(not math.isfinite(value) for value in current.values()):
+                raise AlgebraicLoopConvergenceError(
+                    f"Algebraic loop produced a non-finite value on iteration {iteration}"
+                )
+
+            residual = max(abs(current[key] - previous[key]) for key in current)
+            converged = all(
+                abs(current[key] - previous[key]) <= absolute_tolerance
+                + relative_tolerance * max(abs(current[key]), abs(previous[key]))
+                for key in current
+            )
+            if trace is not None:
+                trace.append({
+                    "time_start": t,
+                    "time_end": round(t + dt, 12),
+                    "components": list(component_names),
+                    "iteration": iteration,
+                    "trial_start_times": start_times,
+                    "trial_end_times": {
+                        name: components[name].current_time for name in component_names
+                    },
+                    "input_guesses": {
+                        f"{key[0]}.{key[1]}": value for key, value in previous.items()
+                    },
+                    "outputs": {
+                        f"{key[0]}.{key[1]}": value for key, value in current.items()
+                    },
+                    "max_residual": residual,
+                    "accepted": converged,
+                })
+            if converged:
+                accepted = True
+                return iteration
+            previous = current
+
+        raise AlgebraicLoopConvergenceError(
+            f"Algebraic loop did not converge after {max_iterations} iterations "
+            f"at t={t}; max residual={residual}: {', '.join(component_names)}"
+        )
+    finally:
+        for name, snapshot in snapshots.items():
+            try:
+                if not accepted:
+                    components[name].restore_state(snapshot)
+            finally:
+                components[name].free_state(snapshot)
+
+
 def seed_delayed_values(
     components: Dict[str, Component],
     connections: List[Dict[str, Any]],
@@ -781,7 +944,10 @@ def seed_delayed_values(
 # Master loop
 # ──────────────────────────────────────────────────────────────
 
-def run_case(cfg: Dict[str, Any]) -> None:
+def run_case(
+    cfg: Dict[str, Any], *,
+    loop_trace: Optional[List[Dict[str, Any]]] = None,
+) -> None:
     start = float(cfg.get("start", 0.0))
     stop  = float(cfg["stop"])
     dt    = float(cfg["dt"])
@@ -791,7 +957,19 @@ def run_case(cfg: Dict[str, Any]) -> None:
     if not math.isclose(n_steps, round(n_steps), abs_tol=1e-9, rel_tol=0):
         raise ValueError("stop - start must be an integer multiple of dt")
 
-    components  = build_components(cfg, start)
+    components = build_components(cfg, start)
+    try:
+        _run_instantiated_case(cfg, start, stop, dt, components, loop_trace)
+    finally:
+        for comp in components.values():
+            comp.terminate()
+
+
+def _run_instantiated_case(
+    cfg: Dict[str, Any], start: float, stop: float, dt: float,
+    components: Dict[str, Component],
+    loop_trace: Optional[List[Dict[str, Any]]],
+) -> None:
     connections = normalize_connections(cfg)
 
     automatic_plan = build_execution_plan(components, connections)
@@ -861,7 +1039,7 @@ def run_case(cfg: Dict[str, Any]) -> None:
 
     print(f"\n=== Simulating  t=[{start}, {stop}]  dt={dt} ===")
 
-    for step in range(round(n_steps)):
+    for step in range(round((stop - start) / dt)):
         t = round(start + step * dt, 12)
         for stage in execution_plan:
             stage_names = set(stage["components"])
@@ -885,25 +1063,28 @@ def run_case(cfg: Dict[str, Any]) -> None:
 
             if stage["kind"] == "algebraic_loop":
                 loop_cfg = cfg.get("algebraic_loop", {})
-                iterations = solve_algebraic_loop(
-                    stage["components"],
-                    components,
-                    connections,
-                    absolute_tolerance=float(
-                        loop_cfg.get("absolute_tolerance", 1e-9)
-                    ),
-                    relative_tolerance=float(
-                        loop_cfg.get("relative_tolerance", 1e-7)
-                    ),
-                    max_iterations=int(loop_cfg.get("max_iterations", 50)),
-                )
+                options = {
+                    "absolute_tolerance": float(loop_cfg.get("absolute_tolerance", 1e-9)),
+                    "relative_tolerance": float(loop_cfg.get("relative_tolerance", 1e-7)),
+                    "max_iterations": int(loop_cfg.get("max_iterations", 50)),
+                }
+                if stage["evaluation"] == "rollback_step":
+                    iterations = solve_rollback_loop(
+                        stage["components"], components, connections, t, dt,
+                        trace=loop_trace, **options,
+                    )
+                else:
+                    iterations = solve_algebraic_loop(
+                        stage["components"], components, connections, **options,
+                    )
                 print(
                     f"[algebraic-loop] t={t}: {stage['components']} "
                     f"converged in {iterations} iteration(s)"
                 )
 
-            # Every component advances exactly once after any same-time loop
-            # has converged. Fixed-point iteration itself never calls doStep.
+            # The accepted rollback trial has already advanced the FMU to t+dt.
+            if stage.get("evaluation") == "rollback_step":
+                continue
             for comp_name in stage["components"]:
                 components[comp_name].do_step(t, dt)
 
@@ -914,12 +1095,10 @@ def run_case(cfg: Dict[str, Any]) -> None:
                 delayed_state[key] = \
                     components[c["src_comp"]].get_output(c["src_port"])
 
-    # Flush loggers and terminate FMUs
+    # Only accepted runs produce a result file.
     for comp in components.values():
         if isinstance(comp, Logger):
             comp.flush()
-    for comp in components.values():
-        comp.terminate()
 
     print("=== DONE ===")
 

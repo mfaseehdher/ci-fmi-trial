@@ -10,4 +10,4 @@ In [case.json](case.json), the [weighted adder](../models/weighted_adder.slx) fo
 MATLAB makes the FMU. The master tries the loop and reports its result.
 
 ## Result
-The master rejected the FMU before trying to solve the loop, because its output does not update without a time step. This run does not test whether the solver diverges.
+The master restored the FMU between trials, but the guesses moved away from -5. It reported a convergence error after 50 iterations. This tests a limitation of the fixed-point solver, not the absence of a mathematical solution.

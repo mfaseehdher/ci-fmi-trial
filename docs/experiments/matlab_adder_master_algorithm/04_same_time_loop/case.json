@@ -16,5 +16,5 @@
     {"src_comp": "adder", "src_port": "Outport", "dst_comp": "adder", "dst_port": "Inport1"},
     {"src_comp": "adder", "src_port": "Outport", "dst_comp": "log", "dst_port": "sum"}
   ],
-  "expect": {"result":"rejected","error":"AlgebraicLoopError","reason_contains":"Cycle"}
+  "expect": {"result":"rejected","error":"AlgebraicLoopConvergenceError","reason_contains":"did not converge"}
 }

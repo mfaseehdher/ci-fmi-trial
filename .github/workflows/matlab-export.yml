@@ -2,7 +2,7 @@ name: MATLAB FMU export and validation
 
 on:
   push:
-    branches: [main, algebricloop]
+    branches: [main, algebricloop, rollback]
   workflow_dispatch:
 
 permissions:

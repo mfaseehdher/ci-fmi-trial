@@ -7,8 +7,10 @@ that connects and runs FMI Co-Simulation FMUs. It builds on `generic.py` from
 The [stage-0 branch](https://github.com/mfaseehdher/ci-fmi-trial/tree/stage-0)
 records that starting algorithm. The `algebricloop` stage detects same-time
 loops instead of automatically delaying a connection. It can iterate a loop
-when component outputs update without advancing time; it does not yet solve
-same-time loops with the MATLAB FMUs used here.
+when component outputs update without advancing time. When FMUs support state
+restoration, the master can retry a communication step. This resolves the
+convergent MATLAB adder loops tested here, whose outputs update only after
+`doStep`.
 
 The master algorithm is in [`src/ci_fmi/`](src/ci_fmi/). Python tests are in
 [`tests/`](tests/). MATLAB models, case configurations, and individual results

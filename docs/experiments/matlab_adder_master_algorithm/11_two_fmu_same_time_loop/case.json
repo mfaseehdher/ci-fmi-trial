@@ -14,7 +14,13 @@
     {"src_comp": "b", "src_port": "Out", "dst_comp": "a", "dst_port": "Feedback"},
     {"src_comp": "zero", "src_port": "value", "dst_comp": "b", "dst_port": "Bias"},
     {"src_comp": "a", "src_port": "Out", "dst_comp": "b", "dst_port": "Feedback"},
-    {"src_comp": "b", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"}
+    {"src_comp": "b", "src_port": "Out", "dst_comp": "log", "dst_port": "sum"},
+    {"src_comp": "a", "src_port": "Out", "dst_comp": "log", "dst_port": "a"}
   ],
-  "expect": {"result":"rejected","error":"AlgebraicLoopError","reason_contains":"Cycle"}
+  "expect": {
+    "result": "pass",
+    "outputs": {"a": [1.1111111111111112], "sum": [0.2222222222222222]},
+    "reference": "analytical",
+    "tolerance": 1e-6
+  }
 }
