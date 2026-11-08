@@ -22,9 +22,11 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ci_fmi.master_algorithm import run_case
 from fmpy import read_model_description
+from validation_metrics import calculate_metrics, write_metrics_csv
 
 
 def matlab_quote(value: Path) -> str:
@@ -95,12 +97,10 @@ def compare_traces(output: Path, reference: Path, output_column: str,
         if key not in ref_by_time:
             raise ValueError(f"No reference sample at t={t}; no interpolation used")
         paired.append((value, ref_by_time[key]))
-    errors = [value - ref for value, ref in paired]
     return {
-        "samples": len(errors),
+        "samples": len(paired),
         "reference_samples": len(expected),
-        "rmse": math.sqrt(sum(e * e for e in errors) / len(errors)),
-        "max_abs_error": max(abs(e) for e in errors),
+        **calculate_metrics(paired),
         "reference_peak": max(abs(ref) for _, ref in paired),
         "first_actual": actual[0][1],
         "last_actual": actual[-1][1],
@@ -203,6 +203,10 @@ def evaluate(case_dir: Path, run_dir: Path) -> dict:
             )
             report["status"] = "compared"
             report["reference"] = reference_path.name
+            write_metrics_csv(
+                run_dir / "metrics.csv", case_dir.name,
+                {outputs[0]: report["comparison"]},
+            )
         else:
             report["reasons"].append("Output-to-reference mapping is ambiguous")
     return report

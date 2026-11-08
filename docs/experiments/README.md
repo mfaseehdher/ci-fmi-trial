@@ -34,3 +34,11 @@ second job. The original configurations explicitly delay feedback. The runner
 removes their manual `step_order` but does not remove or invent a delay. These
 trials therefore check coupling and automatic ordering, not rollback or
 same-time algebraic-loop resolution.
+
+Each comparison records RMSE (squared-error average), MAE (absolute-error
+average), maximum absolute error, and relative RMSE as a percentage of the
+MATLAB signal's range. It also records a windowed DTW mean absolute cost that
+allows up to five samples of time shift. DTW is a secondary shape check, not
+an accuracy verdict: the time-aligned errors remain visible. `result.json`
+and `metrics.csv` are in each run's artifact. There is no default PASS/FAIL
+accuracy threshold because one threshold would not suit every signal.

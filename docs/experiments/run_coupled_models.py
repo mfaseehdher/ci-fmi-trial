@@ -20,6 +20,9 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+
+from validation_metrics import calculate_metrics, write_metrics_csv
 
 CASES = (
     "motor_closed_loop",
@@ -100,16 +103,15 @@ def compare(output: Path, reference: Path) -> dict:
     for column in columns:
         actual = numeric_trace(output, column)
         expected = dict((round(t, 9), value) for t, value in numeric_trace(reference, column))
-        errors = []
+        paired = []
         for t, value in actual:
             key = round(t, 9)
             if key not in expected:
                 raise ValueError(f"No reference sample for {column} at t={t}")
-            errors.append(value - expected[key])
+            paired.append((value, expected[key]))
         metrics[column] = {
-            "samples": len(errors),
-            "rmse": math.sqrt(sum(e * e for e in errors) / len(errors)),
-            "max_abs_error": max(abs(e) for e in errors),
+            "samples": len(paired),
+            **calculate_metrics(paired),
             "first_actual": actual[0][1],
             "first_reference": expected[round(actual[0][0], 9)],
             "last_actual": actual[-1][1],
@@ -138,12 +140,14 @@ def check_one(name: str, run_id: str) -> dict:
         run_case(cfg)
     finally:
         os.chdir(previous_dir)
+    metrics = compare(output / "master_output.csv", output / f"{name}_ref.csv")
+    write_metrics_csv(output / "metrics.csv", name, metrics)
     return {
         "experiment": name,
         "status": "compared",
         "feedback": "explicitly delayed in original configuration",
         "manual_step_order_removed": True,
-        "metrics": compare(output / "master_output.csv", output / f"{name}_ref.csv"),
+        "metrics": metrics,
     }
 
 

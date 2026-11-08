@@ -26,6 +26,8 @@ def test_compare_all_matching_signals_at_equal_times(tmp_path):
     assert metrics["Position"]["samples"] == 2
     assert metrics["Position"]["max_abs_error"] == pytest.approx(0.2)
     assert metrics["Angle"]["max_abs_error"] == pytest.approx(0.4)
+    assert metrics["Position"]["mae"] == pytest.approx(0.15)
+    assert metrics["Position"]["relative_rmse_percent"] == pytest.approx(100 * 0.025 ** 0.5 / 2.1)
 
 
 def test_compare_rejects_unmatched_time(tmp_path):

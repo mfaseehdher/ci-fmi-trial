@@ -70,21 +70,23 @@ jobs:
         shell: powershell
         run: |
           $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          $lines = @('## Coupled controller-plant trials', '', '| Case | Status | Signals (RMSE / max abs error) |', '| --- | --- | --- |')
+          $lines = @('## Coupled controller-plant trials', '', '| Case | Signal | Status | RMSE | MAE | Max absolute error | Relative RMSE | DTW (5 samples) |', '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |')
           Get-ChildItem docs/experiments -Directory | ForEach-Object {
             $path = Join-Path $_.FullName "build/$runId/result.json"
             if (-not (Test-Path -LiteralPath $path)) { return }
             $result = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-            $metrics = @()
             if ($result.metrics) {
               $result.metrics.PSObject.Properties | ForEach-Object {
-                $metrics += "$($_.Name): $($_.Value.rmse) / $($_.Value.max_abs_error)"
+                $value = $_.Value
+                $relative = if ($null -ne $value.relative_rmse_percent) { "$($value.relative_rmse_percent)%" } else { 'N/A' }
+                $lines += "| $($result.experiment) | $($_.Name) | $($result.status) | $($value.rmse) | $($value.mae) | $($value.max_abs_error) | $relative | $($value.dtw_mae_window_5) |"
               }
+            } else {
+              $lines += "| $($result.experiment) | - | $($result.status) | - | - | - | - | - |"
             }
-            $lines += "| $($result.experiment) | $($result.status) | $($metrics -join '; ') |"
           }
           $lines += ''
-          $lines += 'Compared means both traces were produced and error metrics calculated. It does not mean the error met a declared tolerance. These cases use intentional delayed feedback, not rollback.'
+          $lines += 'Relative RMSE is a percentage of the MATLAB reference range (N/A for a constant reference). DTW is mean absolute alignment cost with at most five samples of shift. Compared does not mean an accuracy tolerance was met. These cases use intentional delayed feedback, not rollback.'
           $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - uses: actions/upload-artifact@v4
         if: always()

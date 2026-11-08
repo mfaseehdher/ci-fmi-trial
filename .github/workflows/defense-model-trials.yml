@@ -52,7 +52,7 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          $lines = @('## Defense-model trials', '', '| Experiment | Status | RMSE | Max absolute difference |', '| --- | --- | ---: | ---: |')
+          $lines = @('## Defense-model trials', '', '| Experiment | Status | RMSE | MAE | Max absolute error | Relative RMSE | DTW (5 samples) |', '| --- | --- | ---: | ---: | ---: | ---: | ---: |')
           $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $cases = Get-ChildItem docs/experiments -Directory
           foreach ($case in $cases) {
@@ -60,11 +60,14 @@ jobs:
             if (-not (Test-Path -LiteralPath $path)) { continue }
             $result = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
             $rmse = if ($result.comparison) { [string]$result.comparison.rmse } else { '-' }
+            $mae = if ($result.comparison) { [string]$result.comparison.mae } else { '-' }
             $maximum = if ($result.comparison) { [string]$result.comparison.max_abs_error } else { '-' }
-            $lines += "| $($result.experiment) | $($result.status) | $rmse | $maximum |"
+            $relative = if ($null -ne $result.comparison.relative_rmse_percent) { "$($result.comparison.relative_rmse_percent)%" } else { 'N/A' }
+            $dtw = if ($result.comparison) { [string]$result.comparison.dtw_mae_window_5 } else { '-' }
+            $lines += "| $($result.experiment) | $($result.status) | $rmse | $mae | $maximum | $relative | $dtw |"
           }
           $lines += ''
-          $lines += 'Compared means a trace comparison was produced; it does not mean the errors met an acceptance threshold. Blocked cases keep their detailed MATLAB status and logs in the artifact.'
+          $lines += 'Relative RMSE is a percentage of the MATLAB reference range (N/A for a constant reference). DTW is mean absolute alignment cost with at most five samples of shift. Compared means metrics were calculated; no accuracy tolerance has been set. Detailed CSVs, traces, and failure logs are in the artifact.'
           $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - uses: actions/upload-artifact@v4
         if: always()
@@ -72,6 +75,7 @@ jobs:
           name: defense-model-trial-results
           path: |
             docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/result.json
+            docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/metrics.csv
             docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/matlab_status.json
             docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/matlab.log
             docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/*.fmu

@@ -25,6 +25,8 @@ def test_compare_pairs_only_equal_times(tmp_path: Path) -> None:
     assert result["samples"] == 2
     assert result["reference_samples"] == 3
     assert result["max_abs_error"] == pytest.approx(0.2)
+    assert result["mae"] == pytest.approx(0.15)
+    assert result["relative_rmse_percent"] == pytest.approx(100 * 0.025 ** 0.5 / 1.7)
 
 
 def test_compare_refuses_missing_timestamp(tmp_path: Path) -> None:
