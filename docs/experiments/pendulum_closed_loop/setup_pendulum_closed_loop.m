@@ -92,12 +92,6 @@ reset_model(model);
 new_system(model);
 add_block('simulink/Sources/Step', [model '/ReferenceStep'], ...
     'Time', '0', 'Before', '0', 'After', '0.4', 'Position', [30 60 65 90]);
-add_block('simulink/Discrete/Unit Delay', [model '/AngleDelay'], ...
-    'InitialCondition', '0', 'SampleTime', num2str(dt), ...
-    'Position', [130 140 180 180]);
-add_block('simulink/Discrete/Unit Delay', [model '/VelocityDelay'], ...
-    'InitialCondition', '0', 'SampleTime', num2str(dt), ...
-    'Position', [130 230 180 270]);
 add_block('simulink/Math Operations/Sum', [model '/AngleError'], ...
     'Inputs', '+-', 'Position', [230 75 255 125]);
 add_block('simulink/Math Operations/Gain', [model '/Kp'], ...
@@ -120,17 +114,15 @@ add_block('simulink/Math Operations/Gain', [model '/Damping'], ...
     'Gain', num2str(damping), 'Position', [710 275 770 305]);
 add_block('simulink/Sinks/Out1', [model '/Angle'], 'Position', [830 135 860 155]);
 add_line(model, 'ReferenceStep/1', 'AngleError/1', 'autorouting', 'on');
-add_line(model, 'AngleDelay/1', 'AngleError/2', 'autorouting', 'on');
+add_line(model, 'Theta/1', 'AngleError/2', 'autorouting', 'on');
 add_line(model, 'AngleError/1', 'Kp/1', 'autorouting', 'on');
-add_line(model, 'VelocityDelay/1', 'Kd/1', 'autorouting', 'on');
+add_line(model, 'Omega/1', 'Kd/1', 'autorouting', 'on');
 add_line(model, 'Kp/1', 'TorqueSum/1', 'autorouting', 'on');
 add_line(model, 'Kd/1', 'TorqueSum/2', 'autorouting', 'on');
 add_line(model, 'TorqueSum/1', 'AccelerationSum/1', 'autorouting', 'on');
 add_line(model, 'AccelerationSum/1', 'Omega/1', 'autorouting', 'on');
 add_line(model, 'Omega/1', 'Theta/1', 'autorouting', 'on');
 add_line(model, 'Theta/1', 'Angle/1', 'autorouting', 'on');
-add_line(model, 'Theta/1', 'AngleDelay/1', 'autorouting', 'on');
-add_line(model, 'Omega/1', 'VelocityDelay/1', 'autorouting', 'on');
 add_line(model, 'Theta/1', 'sin_theta/1', 'autorouting', 'on');
 add_line(model, 'sin_theta/1', 'Gravity/1', 'autorouting', 'on');
 add_line(model, 'Gravity/1', 'AccelerationSum/2', 'autorouting', 'on');
@@ -203,8 +195,8 @@ components.plant = struct('type', 'fmu', 'file', 'Pendulum_Plant.fmu');
 components.log = struct('type', 'logger', 'file', sprintf('results_%s.csv', caseName));
 connections = {
     conn('reference', 'ReferenceAngle', 'controller', 'ReferenceAngle')
-    conn('plant', 'Angle', 'controller', 'Angle', true, 0.0)
-    conn('plant', 'AngularVelocity', 'controller', 'AngularVelocity', true, 0.0)
+    conn('plant', 'Angle', 'controller', 'Angle', false, 0.0)
+    conn('plant', 'AngularVelocity', 'controller', 'AngularVelocity', false, 0.0)
     conn('controller', 'Torque', 'plant', 'Torque')
     conn('plant', 'Angle', 'log', 'Angle')
 };

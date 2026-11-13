@@ -83,9 +83,6 @@ reset_model(model);
 new_system(model);
 add_block('simulink/Sources/Step', [model '/ReferenceOutputStep'], ...
     'Time', '0', 'Before', '0', 'After', '1', 'Position', [30 75 65 105]);
-add_block('simulink/Discrete/Unit Delay', [model '/FeedbackDelay'], ...
-    'InitialCondition', '0', 'SampleTime', num2str(dt), ...
-    'Position', [130 190 180 230]);
 add_block('simulink/Math Operations/Sum', [model '/OutputError'], ...
     'Inputs', '+-', 'Position', [130 80 155 130]);
 add_block('simulink/Math Operations/Gain', [model '/Kp'], ...
@@ -104,7 +101,7 @@ add_block('simulink/Continuous/Integrator', [model '/SlowProcessState'], ...
     'InitialCondition', '0', 'Position', [825 90 855 120]);
 add_block('simulink/Sinks/Out1', [model '/ProcessOutput'], 'Position', [930 95 960 115]);
 add_line(model, 'ReferenceOutputStep/1', 'OutputError/1', 'autorouting', 'on');
-add_line(model, 'FeedbackDelay/1', 'OutputError/2', 'autorouting', 'on');
+add_line(model, 'SlowProcessState/1', 'OutputError/2', 'autorouting', 'on');
 add_line(model, 'OutputError/1', 'Kp/1', 'autorouting', 'on');
 add_line(model, 'Kp/1', 'FastError/1', 'autorouting', 'on');
 add_line(model, 'FastActuatorState/1', 'FastError/2', 'autorouting', 'on');
@@ -115,7 +112,6 @@ add_line(model, 'SlowProcessState/1', 'SlowError/2', 'autorouting', 'on');
 add_line(model, 'SlowError/1', 'SlowGain/1', 'autorouting', 'on');
 add_line(model, 'SlowGain/1', 'SlowProcessState/1', 'autorouting', 'on');
 add_line(model, 'SlowProcessState/1', 'ProcessOutput/1', 'autorouting', 'on');
-add_line(model, 'SlowProcessState/1', 'FeedbackDelay/1', 'autorouting', 'on');
 configure_model(model, t_stop, dt);
 save_system(model);
 end
@@ -183,7 +179,7 @@ components.plant = struct('type', 'fmu', 'file', plantFmu);
 components.log = struct('type', 'logger', 'file', sprintf('results_%s.csv', caseName));
 connections = {
     conn('reference', refPort, 'controller', refPort)
-    conn('plant', outputPort, 'controller', measPort, true, 0.0)
+    conn('plant', outputPort, 'controller', measPort, false, 0.0)
     conn('controller', controlPort, 'plant', controlPort)
     conn('plant', outputPort, 'log', outputPort)
 };

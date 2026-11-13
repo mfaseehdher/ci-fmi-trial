@@ -69,9 +69,6 @@ reset_model(model);
 new_system(model);
 add_block('simulink/Sources/Step', [model '/ReferenceDisplacementStep'], ...
     'Time', '0', 'Before', '0', 'After', '1', 'Position', [30 70 65 100]);
-add_block('simulink/Discrete/Unit Delay', [model '/FeedbackDelay'], ...
-    'InitialCondition', '0', 'SampleTime', num2str(dt), ...
-    'Position', [185 155 235 195]);
 add_block('simulink/Math Operations/Sum', [model '/Error'], ...
     'Inputs', '+-', 'Position', [130 75 155 125]);
 add_block('simulink/Math Operations/Gain', [model '/Kp'], ...
@@ -82,11 +79,10 @@ add_block('simulink/Continuous/Transfer Fcn', [model '/MassSpringDamper'], ...
     'Position', [340 75 470 115]);
 add_block('simulink/Sinks/Out1', [model '/Displacement'], 'Position', [550 85 580 105]);
 add_line(model, 'ReferenceDisplacementStep/1', 'Error/1', 'autorouting', 'on');
-add_line(model, 'FeedbackDelay/1', 'Error/2', 'autorouting', 'on');
+add_line(model, 'MassSpringDamper/1', 'Error/2', 'autorouting', 'on');
 add_line(model, 'Error/1', 'Kp/1', 'autorouting', 'on');
 add_line(model, 'Kp/1', 'MassSpringDamper/1', 'autorouting', 'on');
 add_line(model, 'MassSpringDamper/1', 'Displacement/1', 'autorouting', 'on');
-add_line(model, 'MassSpringDamper/1', 'FeedbackDelay/1', 'autorouting', 'on');
 configure_model(model, t_stop, dt);
 save_system(model);
 end
@@ -154,7 +150,7 @@ components.plant = struct('type', 'fmu', 'file', plantFmu);
 components.log = struct('type', 'logger', 'file', sprintf('results_%s.csv', caseName));
 connections = {
     conn('reference', refPort, 'controller', refPort)
-    conn('plant', outputPort, 'controller', measPort, true, 0.0)
+    conn('plant', outputPort, 'controller', measPort, false, 0.0)
     conn('controller', controlPort, 'plant', controlPort)
     conn('plant', outputPort, 'log', outputPort)
 };

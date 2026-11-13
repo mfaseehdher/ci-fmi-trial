@@ -207,23 +207,6 @@ add_block('simulink/Sources/Step', [model '/ReferenceStep'], ...
     'After', num2str(referenceStep), ...
     'Position', [35 50 70 80]);
 
-add_block('simulink/Discrete/Unit Delay', [model '/CartPositionDelay'], ...
-    'InitialCondition', num2str(x0(1), 16), ...
-    'SampleTime', num2str(dt), ...
-    'Position', [125 95 175 125]);
-add_block('simulink/Discrete/Unit Delay', [model '/CartVelocityDelay'], ...
-    'InitialCondition', num2str(x0(2), 16), ...
-    'SampleTime', num2str(dt), ...
-    'Position', [125 145 175 175]);
-add_block('simulink/Discrete/Unit Delay', [model '/PendulumAngleDelay'], ...
-    'InitialCondition', num2str(x0(3), 16), ...
-    'SampleTime', num2str(dt), ...
-    'Position', [125 195 175 225]);
-add_block('simulink/Discrete/Unit Delay', [model '/PendulumRateDelay'], ...
-    'InitialCondition', num2str(x0(4), 16), ...
-    'SampleTime', num2str(dt), ...
-    'Position', [125 245 175 275]);
-
 add_block('simulink/Math Operations/Sum', [model '/PositionError'], ...
     'Inputs', '+-', ...
     'Position', [230 65 255 115]);
@@ -290,12 +273,12 @@ add_block('simulink/Sinks/Out1', [model '/CartPosition'], ...
 add_block('simulink/Sinks/Out1', [model '/PendulumAngle'], ...
     'Position', [1010 315 1045 335]);
 
-add_line(model, 'CartPositionDelay/1', 'PositionError/1', 'autorouting', 'on');
+add_line(model, 'CartPositionState/1', 'PositionError/1', 'autorouting', 'on');
 add_line(model, 'ReferenceStep/1', 'PositionError/2', 'autorouting', 'on');
 add_line(model, 'PositionError/1', 'Kx/1', 'autorouting', 'on');
-add_line(model, 'CartVelocityDelay/1', 'Kxdot/1', 'autorouting', 'on');
-add_line(model, 'PendulumAngleDelay/1', 'Ktheta/1', 'autorouting', 'on');
-add_line(model, 'PendulumRateDelay/1', 'Kthetadot/1', 'autorouting', 'on');
+add_line(model, 'CartVelocityState/1', 'Kxdot/1', 'autorouting', 'on');
+add_line(model, 'PendulumAngleState/1', 'Ktheta/1', 'autorouting', 'on');
+add_line(model, 'PendulumRateState/1', 'Kthetadot/1', 'autorouting', 'on');
 add_line(model, 'Kx/1', 'ForceSum/1', 'autorouting', 'on');
 add_line(model, 'Kxdot/1', 'ForceSum/2', 'autorouting', 'on');
 add_line(model, 'Ktheta/1', 'ForceSum/3', 'autorouting', 'on');
@@ -322,10 +305,6 @@ add_line(model, 'PendulumRateState/1', 'PendulumAngleState/1', 'autorouting', 'o
 
 add_line(model, 'CartPositionState/1', 'CartPosition/1', 'autorouting', 'on');
 add_line(model, 'PendulumAngleState/1', 'PendulumAngle/1', 'autorouting', 'on');
-add_line(model, 'CartPositionState/1', 'CartPositionDelay/1', 'autorouting', 'on');
-add_line(model, 'CartVelocityState/1', 'CartVelocityDelay/1', 'autorouting', 'on');
-add_line(model, 'PendulumAngleState/1', 'PendulumAngleDelay/1', 'autorouting', 'on');
-add_line(model, 'PendulumRateState/1', 'PendulumRateDelay/1', 'autorouting', 'on');
 
 configure_model(model, t_stop, dt);
 save_system(model);
@@ -409,10 +388,10 @@ components.log = struct('type', 'logger', 'file', sprintf('results_%s.csv', case
 
 connections = {
     conn('reference', 'ReferencePosition', 'controller', 'ReferencePosition')
-    conn('plant', 'CartPosition', 'controller', 'CartPosition', true, 0.0)
-    conn('plant', 'CartVelocity', 'controller', 'CartVelocity', true, 0.0)
-    conn('plant', 'PendulumAngle', 'controller', 'PendulumAngle', true, 0.08)
-    conn('plant', 'PendulumRate', 'controller', 'PendulumRate', true, 0.0)
+    conn('plant', 'CartPosition', 'controller', 'CartPosition', false, 0.0)
+    conn('plant', 'CartVelocity', 'controller', 'CartVelocity', false, 0.0)
+    conn('plant', 'PendulumAngle', 'controller', 'PendulumAngle', false, 0.08)
+    conn('plant', 'PendulumRate', 'controller', 'PendulumRate', false, 0.0)
     conn('controller', 'Force', 'plant', 'Force')
     conn('plant', 'CartPosition', 'log', 'CartPosition')
     conn('plant', 'PendulumAngle', 'log', 'PendulumAngle')

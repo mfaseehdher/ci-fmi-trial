@@ -105,7 +105,7 @@ components.log = struct( ...
 
 connections = {
     conn('reference', 'ReferenceSpeed', 'controller', 'ReferenceSpeed')
-    conn('plant', 'Out1', 'controller', 'MeasuredSpeed', true, 0.0)
+    conn('plant', 'Out1', 'controller', 'MeasuredSpeed', false, 0.0)
     conn('controller', 'Voltage', 'plant', 'In1')
     conn('plant', 'Out1', 'log', 'Speed')
 };
