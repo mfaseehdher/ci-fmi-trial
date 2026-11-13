@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       cases:
-        description: 'Space-separated case folder names; leave blank for all eight'
+        description: 'Space-separated case folder names; leave blank for all nine'
         required: false
         default: ''
 
@@ -65,28 +65,45 @@ jobs:
           $selected = @($env:CASE_SELECTION.Split(' ') | Where-Object { $_ })
           python docs/experiments/run_coupled_models.py check --run-id $runId @selected
           exit $LASTEXITCODE
-      - name: Summarize observations
+      - name: Summarize rollback evidence
         if: always()
         shell: powershell
         run: |
           $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          $lines = @('## Coupled controller-plant trials', '', '| Case | Signal | Status | RMSE | MAE | Max absolute error | Relative RMSE | DTW (5 samples) |', '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |')
+          $lines = @('## Coupled controller-plant rollback tests', '', '| Case | Status | Steps with retries | Max iterations | Restore probes | Restore disabled |', '| --- | --- | ---: | ---: | --- | --- |')
+          $metricLines = @('', '### Python master with rollback vs MATLAB simulation', '', '| Case | Signal | RMSE | MAE | Max absolute error | Relative RMSE |', '| --- | --- | ---: | ---: | ---: | ---: |')
+          $exactLines = @('', '### Python master and MATLAB simulation vs exact solution', '', '| Case | Compared | Signal | RMSE | Max absolute error | Relative RMSE |', '| --- | --- | --- | ---: | ---: | ---: |')
           Get-ChildItem docs/experiments -Directory | ForEach-Object {
             $path = Join-Path $_.FullName "build/$runId/result.json"
             if (-not (Test-Path -LiteralPath $path)) { return }
             $result = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $loop = $result.rollback.loop
+            $probes = if ($result.restore_probes) { ($result.restore_probes.PSObject.Properties | ForEach-Object { "$($_.Name): replay=$($_.Value.replay_identical), stateful=$($_.Value.stateful)" }) -join '; ' } else { '-' }
+            $sensitivity = if ($result.restore_sensitivity) { $result.restore_sensitivity.evidence } else { '-' }
+            $lines += "| $($result.experiment) | $($result.status) | $($loop.steps_with_retries) | $($loop.max_iterations) | $probes | $sensitivity |"
             if ($result.metrics) {
               $result.metrics.PSObject.Properties | ForEach-Object {
                 $value = $_.Value
                 $relative = if ($null -ne $value.relative_rmse_percent) { "$($value.relative_rmse_percent)%" } else { 'N/A' }
-                $lines += "| $($result.experiment) | $($_.Name) | $($result.status) | $($value.rmse) | $($value.mae) | $($value.max_abs_error) | $relative | $($value.dtw_mae_window_5) |"
+                $metricLines += "| $($result.experiment) | $($_.Name) | $($value.rmse) | $($value.mae) | $($value.max_abs_error) | $relative |"
               }
-            } else {
-              $lines += "| $($result.experiment) | - | $($result.status) | - | - | - | - | - |"
             }
+            if ($result.exact_solution) {
+              $result.exact_solution.PSObject.Properties | ForEach-Object {
+                $source = $_.Name
+                $_.Value.PSObject.Properties | ForEach-Object {
+                  $value = $_.Value
+                  $relative = if ($null -ne $value.relative_rmse_percent) { "$($value.relative_rmse_percent)%" } else { 'N/A' }
+                  $exactLines += "| $($result.experiment) | $source | $($_.Name) | $($value.rmse) | $($value.max_abs_error) | $relative |"
+                }
+              }
+            }
+            foreach ($reason in @($result.reasons)) { if ($reason) { $lines += "| | reason: $reason | | | | |" } }
           }
+          $lines += $metricLines
+          if ($exactLines.Count -gt 5) { $lines += $exactLines }
           $lines += ''
-          $lines += 'Relative RMSE is a percentage of the MATLAB reference range (N/A for a constant reference). DTW is mean absolute alignment cost with at most five samples of shift. Compared does not mean an accuracy tolerance was met. These cases use intentional delayed feedback, not rollback.'
+          $lines += 'The feedback is a same-time connection and the Simulink reference has no delay. rollback_verified means: every FMU repeats a step identically after restore, the master planned controller and plant as a rollback loop, every step converged and at least one needed a retry, and disabling setFMUstate changed or broke the run. The error table compares the Python master output with the MATLAB closed-loop simulation; it has no pass threshold.'
           $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - uses: actions/upload-artifact@v4
         if: always()
