@@ -21,6 +21,17 @@ feedthrough loop. A loop that also needs a `doStep`, such as a controller and
 an integrating plant, is a reactivity loop and is solved by FMU state
 rollback instead of being rejected.
 
+The `loop-initialization` stage gives every connected input a consistent value
+before the first step, following Hansen et al. (2021): an initialization
+graph of ports (Definition 8), visited in topological order, with
+fixed-point iteration for algebraic loops (Algorithm 1). The first guesses
+come from `initial_values`, then the FMU start values, not from 0. FMUs stay
+in initialization mode until their inputs are set. MATLAB-exported FMUs
+compute their outputs only when they leave initialization mode, so each
+iteration restores the state saved in initialization mode and leaves it
+again. A loop that does not converge stops the run. This matters for MATLAB
+FMUs because their first step uses the inputs given during initialization.
+
 The master algorithm is in [`src/ci_fmi/`](src/ci_fmi/). Python tests are in
 [`tests/`](tests/). MATLAB models, case configurations, and individual results
 are in [the experiment folders](docs/experiments/matlab_adder_master_algorithm/).
