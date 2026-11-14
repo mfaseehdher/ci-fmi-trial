@@ -35,4 +35,13 @@ py -3.13 docs/experiments/run_coupled_models.py check --run-id local-cruise crui
 | Python master with rollback vs exact solution | 4.63e-3 | 7.97e-2 | 0.047 % |
 | MATLAB simulation vs exact solution | 1.99e-11 | 2.0e-10 | 2e-10 % |
 
-The MATLAB simulation equals the exact solution to rounding, so the master's error is co-simulation error, not a reference error. The largest error, 0.0797, is the first sample: the MATLAB FMUs output the value from the start of each step, and the master's logger labels it with the end of the step, so the master trace lags by one 0.01 s step. Comparing each master sample with the exact value one step earlier gives RMSE 1.93e-3 and maximum 0.0139; that remainder comes from the controller's force being held constant during each step instead of following the error inside it.
+The MATLAB simulation equals the exact solution to rounding, so the master's error is co-simulation error, not a reference error. In that run the master trace lagged by one 0.01 s step; the first sample was 0 instead of 0.0797. The cause was initialization, not time labels: a MATLAB-exported FMU takes its first step with the input it was given in initialization mode, and ignores the value set just before that `fmi2DoStep`. The master left the inputs at their start value 0, so the vehicle's first step used `Force = 0`. A direct check on the vehicle FMU confirms it: with `Force = 8000` set before every step, the velocity after the first step is 0 when initialization used `Force = 0`, and 0.07998 when it used `Force = 8000`.
+
+14 November 2026, same FMUs, master with fixed-point initialization (`loop-initialization` branch): the master now solves the controller–plant loop at `t = 0` before the first step (2 iterations, `Force = 8000`, `Velocity = 0`) and gives these inputs to the FMUs in initialization mode. The result is still `rollback_verified`, with 1,572 steps needing a retry and at most 3 iterations.
+
+| Velocity compared | RMSE | Max absolute error | Relative RMSE |
+| --- | ---: | ---: | ---: |
+| Python master with rollback vs MATLAB simulation | 1.93e-3 | 1.39e-2 | 0.019 % |
+| Python master with rollback vs exact solution | 1.93e-3 | 1.39e-2 | 0.019 % |
+
+The remaining error comes from the coupling: the controller's force is held constant during each step instead of following the error inside it.

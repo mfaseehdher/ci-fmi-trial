@@ -57,6 +57,28 @@ class Component:
             f"Component '{self.name}' does not support same-time output evaluation"
         )
 
+    # Initialization hooks (see initialize_co_simulation).
+    def initialize_outputs(self, t: float) -> None:
+        """Set outputs that depend only on time to their value at t."""
+
+    def initial_evaluate(self) -> bool:
+        """Recompute outputs from the current inputs during initialization.
+
+        Returns False when the component cannot do this, so its outputs keep
+        their current values.
+        """
+        try:
+            self.evaluate_outputs()
+        except NotImplementedError:
+            return False
+        return True
+
+    def can_repeat_initial_evaluation(self) -> bool:
+        return True
+
+    def finish_initialization(self) -> None:
+        """Leave initialization; called once for every component."""
+
     def terminate(self) -> None:
         pass
 
@@ -111,6 +133,12 @@ class CSVStimulus(Component):
             if k != self.time_col:
                 self.outputs[k] = v
 
+    def initialize_outputs(self, t: float) -> None:
+        # A file without a time column is read row by row, so reading a row
+        # here would skip it during the run.
+        if self.has_time:
+            self.do_step(t, 0.0)
+
 
 # ──────────────────────────────────────────────────────────────
 # Constant source
@@ -120,6 +148,9 @@ class Constant(Component):
     def __init__(self, name: str, values: Dict[str, Any]) -> None:
         super().__init__(name)
         self._values = {k: _cast(str(v)) for k, v in values.items()}
+
+    def initialize_outputs(self, t: float) -> None:
+        self.do_step(t, 0.0)
 
     def do_step(self, t: float, dt: float) -> None:
         self.outputs.update(self._values)
@@ -160,6 +191,9 @@ class StepSignal(Component):
                 "step_time": float(spec.get("step_time", 0.0)),
             }
 
+    def initialize_outputs(self, t: float) -> None:
+        self.do_step(t, 0.0)
+
     def do_step(self, t: float, dt: float) -> None:
         for port, p in self._ports.items():
             self.outputs[port] = p["step"] if t >= p["step_time"] else p["initial"]
@@ -185,6 +219,9 @@ class SineSignal(Component):
                 "phase":     float(spec.get("phase",     0.0)),
                 "bias":      float(spec.get("bias",      0.0)),
             }
+
+    def initialize_outputs(self, t: float) -> None:
+        self.do_step(t, 0.0)
 
     def do_step(self, t: float, dt: float) -> None:
         import math
@@ -214,6 +251,9 @@ class RampSignal(Component):
                 "slope":      float(spec.get("slope",      1.0)),
                 "start_time": float(spec.get("start_time", 0.0)),
             }
+
+    def initialize_outputs(self, t: float) -> None:
+        self.do_step(t, 0.0)
 
     def do_step(self, t: float, dt: float) -> None:
         for port, p in self._ports.items():
@@ -247,6 +287,9 @@ class PulseSignal(Component):
                 "phase_delay": float(spec.get("phase_delay", 0.0)),
                 "bias":        float(spec.get("bias",        0.0)),
             }
+
+    def initialize_outputs(self, t: float) -> None:
+        self.do_step(t, 0.0)
 
     def do_step(self, t: float, dt: float) -> None:
         for port, p in self._ports.items():
@@ -316,12 +359,23 @@ class FMUComponent(Component):
         self.parameters_list: List[str] = []
         self.start_values:    Dict[str, float] = {}  # initial values from FMU XML
         self.feedthrough_inputs: Dict[str, Optional[set[str]]] = {}
+        self.initial_dependencies: Dict[str, Optional[set[str]]] = {}
+        self.in_initialization = False
+        self._init_snapshot: Any = None
+        self._initial_evaluations = 0
         self.declared_step:   Optional[float] = None
         self._n_sub:          int   = 1     # sub-steps per communication step
         self._h:              float = 0.0   # step size passed to doStep
 
     def instantiate(self, start: float,
-                    params: Optional[Dict[str, Any]] = None) -> None:
+                    params: Optional[Dict[str, Any]] = None,
+                    exit_initialization: bool = True) -> None:
+        """Load the FMU and enter initialization mode.
+
+        With ``exit_initialization=False`` the FMU stays in initialization
+        mode, so the master can set its inputs from the connected outputs
+        first (initialize_co_simulation).
+        """
         md = read_model_description(self.fmu_path, validate=False)
         if md.coSimulation is None:
             raise ValueError(f"FMU '{self.name}' is not FMI 2.0 Co-Simulation")
@@ -366,21 +420,30 @@ class FMUComponent(Component):
         ).getroot()
         xml_variables = xml_root.findall("./ModelVariables/ScalarVariable")
         input_names = set(self.inputs_list)
-        for unknown in xml_root.findall("./ModelStructure/Outputs/Unknown"):
-            output_index = int(unknown.attrib["index"]) - 1
-            output_name = xml_variables[output_index].attrib["name"]
-            raw_dependencies = unknown.get("dependencies")
-            if raw_dependencies is None:
-                # FMI 2.0: omitted means dependency on every known input.
-                self.feedthrough_inputs[output_name] = set(input_names)
-                continue
-            dependency_names = {
-                xml_variables[int(index) - 1].attrib["name"]
-                for index in raw_dependencies.split()
-            }
-            self.feedthrough_inputs[output_name] = (
-                dependency_names & input_names
-            )
+        output_names = set(self.outputs_list)
+
+        def read_dependencies(section: str) -> Dict[str, Optional[set[str]]]:
+            result: Dict[str, Optional[set[str]]] = {}
+            for unknown in xml_root.findall(f"./ModelStructure/{section}/Unknown"):
+                name = xml_variables[int(unknown.attrib["index"]) - 1].attrib["name"]
+                if name not in output_names:
+                    continue  # InitialUnknowns also lists states and derivatives
+                raw_dependencies = unknown.get("dependencies")
+                if raw_dependencies is None:
+                    # FMI 2.0: omitted means dependency on every known input.
+                    result[name] = set(input_names)
+                    continue
+                result[name] = {
+                    xml_variables[int(index) - 1].attrib["name"]
+                    for index in raw_dependencies.split()
+                } & input_names
+            return result
+
+        self.feedthrough_inputs = read_dependencies("Outputs")
+        # Dependencies at the start time (FMI 2.0 §2.2.8). An output missing
+        # from InitialUnknowns has initial="exact" and depends on no input.
+        self.initial_dependencies = {name: set() for name in output_names}
+        self.initial_dependencies.update(read_dependencies("InitialUnknowns"))
 
         self.fmu = FMU2Slave(
             guid=md.guid,
@@ -396,11 +459,64 @@ class FMUComponent(Component):
             for k, v in params.items():
                 self._fmu_set(k, v)
 
+        self.in_initialization = True
+        self.current_time = start
+        if exit_initialization:
+            self.finish_initialization()
+
+    def _exit_initialization_mode(self) -> None:
+        for key, value in self.inputs.items():
+            self._fmu_set(key, value)
         self.fmu.exitInitializationMode()
         self._initialized = True
-        self.current_time = start
+        self.in_initialization = False
         for key in self.outputs_list:
             self.outputs[key] = self._fmu_get(key)
+
+    def initial_evaluate(self) -> bool:
+        """Compute the initial outputs for the current inputs.
+
+        MATLAB-exported FMUs compute their outputs when they leave
+        initialization mode, not when an input is set. So each evaluation
+        restores the state saved in initialization mode, sets the inputs and
+        leaves initialization mode again. Without FMU state support this can
+        happen only once.
+        """
+        if self.supports_rollback:
+            if self._init_snapshot is None:
+                if not self.in_initialization:
+                    raise AlgebraicLoopError(
+                        f"FMU '{self.name}' has already left initialization mode"
+                    )
+                self._init_snapshot = self.fmu.getFMUstate()
+            else:
+                self.fmu.setFMUstate(self._init_snapshot)
+        elif not self.in_initialization:
+            raise AlgebraicLoopError(
+                f"FMU '{self.name}' cannot repeat its initialization "
+                "(canGetAndSetFMUstate is false)"
+            )
+        self._exit_initialization_mode()
+        self._initial_evaluations += 1
+        return True
+
+    def can_repeat_initial_evaluation(self) -> bool:
+        return self.supports_rollback or self.in_initialization
+
+    def finish_initialization(self) -> None:
+        if self.in_initialization:
+            self._exit_initialization_mode()
+        if self._init_snapshot is not None:
+            self.fmu.freeFMUstate(self._init_snapshot)
+            self._init_snapshot = None
+
+    def has_initial_dependency(
+        self, input_name: str, output_name: str
+    ) -> Optional[bool]:
+        dependencies = self.initial_dependencies.get(output_name)
+        if dependencies is None:
+            return None
+        return input_name in dependencies
 
     def configure_stepping(self, comm_dt: float) -> None:
         """
@@ -526,6 +642,11 @@ class FMUComponent(Component):
     def terminate(self) -> None:
         if self.fmu is not None:
             instantiated = bool(getattr(self.fmu, "component", None))
+            if instantiated and self._init_snapshot is not None:
+                try:
+                    self.fmu.freeFMUstate(self._init_snapshot)
+                finally:
+                    self._init_snapshot = None
             try:
                 if instantiated and self._initialized:
                     self.fmu.terminate()
@@ -599,7 +720,8 @@ def build_components(cfg: Dict[str, Any], start: float) -> Dict[str, Component]:
             if not isinstance(same_time, bool):
                 raise ValueError("same_time_evaluation must be a JSON boolean")
             fmu = FMUComponent(name, spec["file"], same_time)
-            fmu.instantiate(start=start, params=spec.get("parameters", {}))
+            fmu.instantiate(start=start, params=spec.get("parameters", {}),
+                            exit_initialization=False)
             comps[name] = fmu
         elif ctype == "logger":
             comps[name] = Logger(name, spec["file"])
@@ -1022,6 +1144,245 @@ def seed_delayed_values(
     return delayed_state
 
 
+def _initial_dependency(
+    component_name: str,
+    input_port: str,
+    output_port: str,
+    components: Dict[str, Component],
+    declared: Dict[Tuple[str, str], Optional[bool]],
+) -> bool:
+    """Does this output depend on this input at the start time?
+
+    A ``direct_feedthrough`` hint on the connection wins. Otherwise FMUs use
+    ModelStructure/InitialUnknowns and other components their feedthrough.
+    Missing information counts as a dependency, as FMI 2.0 does for an
+    omitted dependency list.
+    """
+    value = declared.get((component_name, input_port))
+    if value is not None:
+        return bool(value)
+    component = components[component_name]
+    checker = getattr(component, "has_initial_dependency", None)
+    if checker is None:
+        checker = getattr(component, "has_direct_feedthrough", None)
+    if checker is None:
+        return True
+    return checker(input_port, output_port) is not False
+
+
+def build_initialization_graph(
+    components: Dict[str, Component],
+    connections: List[Dict[str, Any]],
+) -> Any:
+    """Initialization graph of Hansen et al. (2021), Definition 8.
+
+    Nodes are ports: ("out", c, y) and ("in", c, u). Edges:
+
+    1. connection y_d -> u_c:                   out_d(y) -> in_c(u)
+    2. y_c depends on u_c at the start time:    in_c(u)  -> out_c(y)
+
+    There are no doStep nodes because no time passes during
+    initialization. A ``delayed`` connection gets its start value from the
+    delay itself (seed_delayed_values), so it adds no rule-1 edge.
+    """
+    if not NETWORKX_AVAILABLE:
+        raise RuntimeError("networkx is required for dependency analysis")
+
+    inputs: Dict[str, set[str]] = {name: set() for name in components}
+    outputs: Dict[str, set[str]] = {name: set() for name in components}
+    declared: Dict[Tuple[str, str], Optional[bool]] = {}
+    for connection in connections:
+        inputs[connection["dst_comp"]].add(connection["dst_port"])
+        outputs[connection["src_comp"]].add(connection["src_port"])
+        declared[(connection["dst_comp"], connection["dst_port"])] = (
+            connection.get("direct_feedthrough")
+        )
+
+    graph = nx.DiGraph()
+    for name in components:
+        for output_port in outputs[name]:
+            graph.add_node(("out", name, output_port))
+        for input_port in inputs[name]:
+            graph.add_node(("in", name, input_port))
+            for output_port in outputs[name]:
+                if _initial_dependency(name, input_port, output_port, components, declared):
+                    graph.add_edge(("in", name, input_port), ("out", name, output_port))
+    for connection in connections:
+        if not connection["delayed"]:
+            graph.add_edge(
+                ("out", connection["src_comp"], connection["src_port"]),
+                ("in", connection["dst_comp"], connection["dst_port"]),
+            )
+    return graph
+
+
+def initialize_co_simulation(
+    components: Dict[str, Component],
+    connections: List[Dict[str, Any]],
+    start: float,
+    *,
+    delayed_values: Optional[Dict[Tuple[str, str], Any]] = None,
+    initial_guesses: Optional[Dict[str, float]] = None,
+    absolute_tolerance: float = 1e-9,
+    relative_tolerance: float = 1e-7,
+    max_iterations: int = 50,
+) -> Dict[str, Any]:
+    """Give every connected input a consistent value at the start time.
+
+    Hansen et al. (2021), Algorithm 1: visit the strongly connected
+    components of the initialization graph in topological order. A single
+    port is computed once: an input takes the value of its source output, an
+    output is read after its component has been evaluated with its inputs.
+    An algebraic loop is solved by fixed-point iteration (Definition 10),
+    starting from ``initial_guesses`` ("component.port"), then the FMU's
+    start values, then the component's current output. A loop that does
+    not converge stops the run instead of starting from wrong values.
+    """
+    if (not math.isfinite(absolute_tolerance) or absolute_tolerance < 0
+            or not math.isfinite(relative_tolerance) or relative_tolerance < 0
+            or absolute_tolerance + relative_tolerance == 0
+            or max_iterations < 1):
+        raise ValueError("Initialization tolerances must be finite/nonnegative and iterations positive")
+    delayed_values = delayed_values or {}
+    initial_guesses = initial_guesses or {}
+
+    for component in components.values():
+        component.initialize_outputs(start)
+
+    source_of = {
+        (c["dst_comp"], c["dst_port"]): (c["src_comp"], c["src_port"])
+        for c in connections if not c["delayed"]
+    }
+    stale: set[str] = set(components)  # inputs changed since last evaluation
+    evaluated: set[str] = set()
+
+    def set_input(name: str, port: str, value: Any) -> None:
+        components[name].set_input(port, value)
+        stale.add(name)
+
+    def evaluate(name: str) -> None:
+        component = components[name]
+        if name in evaluated and not component.can_repeat_initial_evaluation():
+            return
+        if component.initial_evaluate():
+            evaluated.add(name)
+        stale.discard(name)
+
+    for c in connections:
+        if c["delayed"]:
+            key = (c["src_comp"], c["src_port"])
+            set_input(c["dst_comp"], c["dst_port"], delayed_values.get(key, c["default"]))
+
+    graph = build_initialization_graph(components, connections)
+    condensation = nx.condensation(graph)
+
+    def first_member(index: int) -> str:
+        return min(repr(node) for node in condensation.nodes[index]["members"])
+
+    report: Dict[str, Any] = {"loops": []}
+    for index in nx.lexicographical_topological_sort(condensation, key=first_member):
+        nodes = set(condensation.nodes[index]["members"])
+        is_loop = len(nodes) > 1 or any(graph.has_edge(node, node) for node in nodes)
+        if not is_loop:
+            kind, name, port = next(iter(nodes))
+            if kind == "in":
+                if (name, port) in source_of:
+                    source = source_of[(name, port)]
+                    set_input(name, port, components[source[0]].get_output(source[1]))
+            elif name in stale:
+                evaluate(name)
+            continue
+
+        loop_inputs = sorted(
+            (node[1], node[2]) for node in nodes
+            if node[0] == "in" and (node[1], node[2]) in source_of
+        )
+        loop_outputs = sorted({source_of[key] for key in loop_inputs})
+        names = sorted({node[1] for node in nodes})
+        label = ", ".join(f"{c}.{p}" for c, p in loop_outputs)
+        blocked = [
+            name for name in names
+            if isinstance(components[name], FMUComponent)
+            and not components[name].supports_rollback
+        ]
+        if blocked:
+            raise AlgebraicLoopError(
+                "Initial algebraic loop " + label + " needs repeated evaluation, "
+                "which these components cannot do: " + ", ".join(blocked)
+            )
+
+        guesses: Dict[Tuple[str, str], float] = {}
+        sources: Dict[str, str] = {}
+        for name, port in loop_outputs:
+            dotted = f"{name}.{port}"
+            starts = getattr(components[name], "start_values", {})
+            if dotted in initial_guesses:
+                guesses[(name, port)] = float(initial_guesses[dotted])
+                sources[dotted] = "initial_values"
+            elif port in starts:
+                guesses[(name, port)] = float(starts[port])
+                sources[dotted] = "FMU start value"
+            else:
+                guesses[(name, port)] = float(components[name].get_output(port))
+                sources[dotted] = "current output"
+        first_guess = dict(guesses)
+
+        converged = False
+        residual = math.inf
+        for iteration in range(1, max_iterations + 1):
+            # Jacobi sweep: every loop input takes the previous iteration's value.
+            for name, port in loop_inputs:
+                set_input(name, port, guesses[source_of[(name, port)]])
+            for name in names:
+                evaluate(name)
+            current = {
+                key: float(components[key[0]].get_output(key[1])) for key in guesses
+            }
+            if any(not math.isfinite(value) for value in current.values()):
+                raise AlgebraicLoopConvergenceError(
+                    f"Initial algebraic loop {label} produced a non-finite value "
+                    f"on iteration {iteration}"
+                )
+            residual = max(abs(current[key] - guesses[key]) for key in current)
+            converged = all(
+                abs(current[key] - guesses[key]) <= absolute_tolerance
+                + relative_tolerance * max(abs(current[key]), abs(guesses[key]))
+                for key in current
+            )
+            guesses = current
+            if converged:
+                break
+        if not converged:
+            raise AlgebraicLoopConvergenceError(
+                f"Initial algebraic loop did not converge after {max_iterations} "
+                f"iterations; max residual={residual}: {label}"
+            )
+        # The last evaluation used the previous guesses; give the inputs the
+        # converged values so they match the outputs the next stage reads.
+        for name, port in loop_inputs:
+            components[name].set_input(port, guesses[source_of[(name, port)]])
+        report["loops"].append({
+            "outputs": [f"{c}.{p}" for c, p in loop_outputs],
+            "first_guess": {f"{c}.{p}": v for (c, p), v in first_guess.items()},
+            "guess_source": sources,
+            "values": {f"{c}.{p}": v for (c, p), v in guesses.items()},
+            "iterations": iteration,
+            "max_residual": residual,
+        })
+        print(f"[init] loop {label} converged in {iteration} iteration(s): "
+              + ", ".join(f"{c}.{p}={v:.6g}" for (c, p), v in guesses.items()))
+
+    # Components whose outputs feed nothing have no output node. An FMU
+    # applies its inputs when it leaves initialization mode below; other
+    # components are evaluated here so their outputs match their inputs.
+    for name in sorted(stale):
+        if not isinstance(components[name], FMUComponent):
+            evaluate(name)
+    for component in components.values():
+        component.finish_initialization()
+    return report
+
+
 # ──────────────────────────────────────────────────────────────
 # Master loop
 # ──────────────────────────────────────────────────────────────
@@ -1029,6 +1390,7 @@ def seed_delayed_values(
 def run_case(
     cfg: Dict[str, Any], *,
     loop_trace: Optional[List[Dict[str, Any]]] = None,
+    init_report: Optional[Dict[str, Any]] = None,
 ) -> None:
     start = float(cfg.get("start", 0.0))
     stop  = float(cfg["stop"])
@@ -1041,7 +1403,7 @@ def run_case(
 
     components = build_components(cfg, start)
     try:
-        _run_instantiated_case(cfg, start, stop, dt, components, loop_trace)
+        _run_instantiated_case(cfg, start, stop, dt, components, loop_trace, init_report)
     finally:
         for comp in components.values():
             comp.terminate()
@@ -1051,6 +1413,7 @@ def _run_instantiated_case(
     cfg: Dict[str, Any], start: float, stop: float, dt: float,
     components: Dict[str, Component],
     loop_trace: Optional[List[Dict[str, Any]]],
+    init_report: Optional[Dict[str, Any]] = None,
 ) -> None:
     connections = normalize_connections(cfg)
 
@@ -1118,6 +1481,18 @@ def _run_instantiated_case(
     delayed_state: Dict[Tuple[str, str], Any] = seed_delayed_values(
         components, connections, user_initials
     )
+
+    init_cfg = cfg.get("initialization", {})
+    initialization_report = initialize_co_simulation(
+        components, connections, start,
+        delayed_values=delayed_state,
+        initial_guesses=user_initials,
+        absolute_tolerance=float(init_cfg.get("absolute_tolerance", 1e-9)),
+        relative_tolerance=float(init_cfg.get("relative_tolerance", 1e-7)),
+        max_iterations=int(init_cfg.get("max_iterations", 50)),
+    )
+    if init_report is not None:
+        init_report.update(initialization_report)
 
     print(f"\n=== Simulating  t=[{start}, {stop}]  dt={dt} ===")
 
