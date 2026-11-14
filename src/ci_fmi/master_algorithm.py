@@ -624,7 +624,7 @@ def normalize_connections(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 # ──────────────────────────────────────────────────────────────
-# Automatic loop resolving using graph algorithms
+# Execution planning from the step operation graph (Hansen et al., Def. 4-5)
 # ──────────────────────────────────────────────────────────────
 
 class AlgebraicLoopError(RuntimeError):
@@ -635,100 +635,182 @@ class AlgebraicLoopConvergenceError(AlgebraicLoopError):
     """Raised when fixed-point iteration does not converge."""
 
 
-def _is_cyclic_component(graph: Any, nodes: set[str]) -> bool:
-    return len(nodes) > 1 or any(graph.has_edge(node, node) for node in nodes)
-
-
-def _connection_feedthrough(
-    connection: Dict[str, Any],
+def _feedthrough(
+    component_name: str,
+    input_port: str,
+    output_port: str,
     components: Dict[str, Component],
-    internal_connections: List[Dict[str, Any]],
+    declared: Dict[Tuple[str, str], Optional[bool]],
 ) -> Optional[bool]:
-    declared = connection.get("direct_feedthrough")
-    if declared is not None:
-        return bool(declared)
+    """Does this output react to this input within the same step?
 
-    destination_name = connection["dst_comp"]
-    destination = components[destination_name]
-    checker = getattr(destination, "has_direct_feedthrough", None)
+    A ``direct_feedthrough`` value on the connection into the input wins (a
+    user hint, as in Oakes et al.); otherwise the FMU's ModelStructure is used.
+    None means the information is missing.
+    """
+    value = declared.get((component_name, input_port))
+    if value is not None:
+        return bool(value)
+    checker = getattr(components[component_name], "has_direct_feedthrough", None)
     if checker is None:
         return None
+    return checker(input_port, output_port)
 
-    outgoing_ports = {
-        item["src_port"] for item in internal_connections
-        if item["src_comp"] == destination_name
-    }
-    results = [
-        checker(connection["dst_port"], output_port)
-        for output_port in outgoing_ports
-    ]
-    if any(result is True for result in results):
-        return True
-    if results and all(result is False for result in results):
-        return False
-    return None
+
+def build_step_operation_graph(
+    components: Dict[str, Component],
+    connections: List[Dict[str, Any]],
+) -> Any:
+    """Step operation graph of Hansen et al., Definition 4.
+
+    Nodes are ("set", c, u), ("step", c) and ("get", c, y). An edge a -> b
+    means a must happen before b within one communication step:
+
+    1. connection y_d -> u_c:            get_d(y) -> set_c(u)
+    2. every output y of c:              step_c   -> get_c(y)
+    3. reactive input u of c:            set_c(u) -> step_c
+    4. delayed input u of c:             step_c   -> set_c(u)
+    5. u feeds through to y inside c:    set_c(u) -> get_c(y)
+
+    A same-time connection makes its input reactive: the destination steps
+    with the value its source produced in this step. A ``delayed`` connection
+    is a unit delay on the wire: the value comes from the previous step, so
+    rule 1 does not apply within the step. Rule 5 edges whose feedthrough is
+    unknown are kept, as FMI 2.0 does for an omitted dependency list, and
+    are marked ``unknown=True``.
+    """
+    if not NETWORKX_AVAILABLE:
+        raise RuntimeError("networkx is required for dependency analysis")
+
+    inputs: Dict[str, Dict[str, bool]] = {name: {} for name in components}
+    outputs: Dict[str, set[str]] = {name: set() for name in components}
+    declared: Dict[Tuple[str, str], Optional[bool]] = {}
+    for connection in connections:
+        inputs[connection["dst_comp"]][connection["dst_port"]] = connection["delayed"]
+        outputs[connection["src_comp"]].add(connection["src_port"])
+        declared[(connection["dst_comp"], connection["dst_port"])] = (
+            connection.get("direct_feedthrough")
+        )
+
+    graph = nx.DiGraph()
+    for name in components:
+        step = ("step", name)
+        graph.add_node(step)
+        for output_port in outputs[name]:
+            graph.add_edge(step, ("get", name, output_port), rule=2)
+        for input_port, delayed in inputs[name].items():
+            set_node = ("set", name, input_port)
+            if delayed:
+                graph.add_edge(step, set_node, rule=4)
+            else:
+                graph.add_edge(set_node, step, rule=3)
+            for output_port in outputs[name]:
+                feeds = _feedthrough(name, input_port, output_port, components, declared)
+                if feeds is not False:
+                    graph.add_edge(
+                        set_node, ("get", name, output_port),
+                        rule=5, unknown=feeds is None,
+                    )
+    for connection in connections:
+        if not connection["delayed"]:
+            graph.add_edge(
+                ("get", connection["src_comp"], connection["src_port"]),
+                ("set", connection["dst_comp"], connection["dst_port"]),
+                rule=1,
+            )
+    return graph
+
+
+def _is_feedthrough_loop(graph: Any, nodes: set) -> bool:
+    """True when the loop closes through set/get operations alone.
+
+    Such a loop (an "output loop", Gomes et al. 2018 tutorial §4.4) can be
+    solved by setting inputs and reading outputs without stepping. If a
+    dependency in the loop exists only through a doStep (a "state loop", or
+    the reactivity loop of Hansen et al., Definition 5), solving it needs the
+    step itself, and therefore FMU state rollback.
+    """
+    operations = [node for node in nodes if node[0] != "step"]
+    subgraph = graph.subgraph(operations)
+    return (
+        len(operations) > 0
+        and nx.is_strongly_connected(subgraph)
+        and any(subgraph.has_edge(*edge) for edge in subgraph.edges)
+    )
 
 
 def build_execution_plan(
     components: Dict[str, Component],
     connections: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Order acyclic components and classify cycles without modifying links."""
-    if not NETWORKX_AVAILABLE:
-        raise RuntimeError("networkx is required for dependency analysis")
+    """Order the components from the step operation graph.
 
-    graph = nx.DiGraph()
-    graph.add_nodes_from(components)
-    for connection in connections:
-        if not connection["delayed"]:
-            graph.add_edge(connection["src_comp"], connection["dst_comp"])
-
+    Tarjan's strongly connected components (Hansen et al.; Gomes et al. 2020,
+    CBD loop detection) of the graph are visited in topological order. A
+    trivial component is one stage; a non-trivial one is an algebraic loop
+    whose members are solved together.
+    """
+    graph = build_step_operation_graph(components, connections)
     condensation = nx.condensation(graph)
-    plan: List[Dict[str, Any]] = []
-    for condensed_node in nx.topological_sort(condensation):
-        names = set(condensation.nodes[condensed_node]["members"])
-        if not _is_cyclic_component(graph, names):
-            plan.append({"kind": "component", "components": sorted(names)})
-            continue
 
-        internal = [
-            connection for connection in connections
-            if not connection["delayed"]
-            and connection["src_comp"] in names
-            and connection["dst_comp"] in names
-        ]
-        feedthrough = [
-            _connection_feedthrough(connection, components, internal)
-            for connection in internal
-        ]
-        if any(value is None for value in feedthrough):
+    def first_member(index: int) -> str:
+        return min(repr(node) for node in condensation.nodes[index]["members"])
+
+    plan: List[Dict[str, Any]] = []
+    for index in nx.lexicographical_topological_sort(condensation, key=first_member):
+        nodes = set(condensation.nodes[index]["members"])
+        names = sorted({node[1] for node in nodes if node[0] == "step"})
+        if not names:
+            continue
+        if len(nodes) == 1:
+            node = next(iter(nodes))
+            if not graph.has_edge(node, node):
+                plan.append({"kind": "component", "components": names})
+                continue
+
+        loop_label = ", ".join(names)
+        unknown = sorted(
+            f"{source[1]}.{source[2]} -> {target[1]}.{target[2]}"
+            for source, target, data in graph.subgraph(nodes).edges(data=True)
+            if data.get("unknown")
+        )
+        if unknown:
             raise AlgebraicLoopError(
-                "Cannot classify cycle " + ", ".join(sorted(names))
-                + ": direct-feedthrough information is missing. Add valid FMI "
-                  "ModelStructure dependencies or declare 'direct_feedthrough'."
+                "Cannot classify cycle " + loop_label
+                + ": direct-feedthrough information is missing for "
+                + ", ".join(unknown) + ". Add valid FMI ModelStructure "
+                  "dependencies or declare 'direct_feedthrough'."
             )
-        if not all(feedthrough):
-            raise AlgebraicLoopError(
-                "Cycle " + ", ".join(sorted(names))
-                + " contains a time-advancing dependency and requires rollback. "
-                  "Only pure direct-feedthrough loops are currently supported."
-            )
-        loop_components = [components[name] for name in names]
-        if all(getattr(comp, "supports_rollback", False) for comp in loop_components):
+
+        loop_type = "feedthrough" if _is_feedthrough_loop(graph, nodes) else "reactivity"
+        members = [components[name] for name in names]
+        if all(getattr(comp, "supports_rollback", False) for comp in members):
             evaluation = "rollback_step"
+        elif loop_type == "reactivity":
+            missing = [
+                name for name in names
+                if not getattr(components[name], "supports_rollback", False)
+            ]
+            raise AlgebraicLoopError(
+                "Cycle " + loop_label + " passes through a doStep, so each "
+                "step must be repeated until the exchanged values agree. That "
+                "needs FMU state rollback, which these components lack: "
+                + ", ".join(missing)
+            )
         elif all(
             not isinstance(comp, FMUComponent) or comp.same_time_evaluation
-            for comp in loop_components
+            for comp in members
         ):
             evaluation = "same_time"
         else:
             raise AlgebraicLoopError(
-                "Cycle " + ", ".join(sorted(names)) + " requires every FMU "
+                "Cycle " + loop_label + " requires every FMU "
                 "to support rollback or verified same-time output evaluation."
             )
+
         plan.append({
-            "kind": "algebraic_loop", "components": sorted(names),
-            "evaluation": evaluation,
+            "kind": "algebraic_loop", "components": names,
+            "loop_type": loop_type, "evaluation": evaluation,
         })
 
     return plan
