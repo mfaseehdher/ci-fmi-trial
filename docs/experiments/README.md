@@ -69,3 +69,16 @@ allows up to five samples of time shift. DTW is a secondary shape check, not
 an accuracy verdict: the time-aligned errors remain visible. `result.json`
 and `metrics.csv` are in each run's artifact. There is no default PASS/FAIL
 accuracy threshold because one threshold would not suit every signal.
+
+After each run, [plot_results.py](plot_results.py) draws one figure per
+experiment, `<experiment>_comparison.png`: for every signal, the Python master
+and the MATLAB simulation over time, and next to it the error over time
+(master minus MATLAB). Where an exact solution exists, the errors of both
+against it are drawn as well. The workflows upload these figures as the
+`coupled-comparison-plots` and `defense-model-comparison-plots` artifacts. The
+script finds every run itself, so new experiments need no change. To plot a
+local run:
+
+```bash
+py -3.13 docs/experiments/plot_results.py --run-id <run-id>
+```

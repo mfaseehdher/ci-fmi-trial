@@ -35,7 +35,7 @@ jobs:
           $python = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'
           if (-not (Test-Path -LiteralPath $python)) { throw "Python 3.13 not found: $python" }
           "TRIAL_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Append
-          & $python -m pip install fmpy==0.3.26 networkx==3.6.1
+          & $python -m pip install fmpy==0.3.26 networkx==3.6.1 matplotlib==3.10.8
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare, export, run, and compare
         shell: powershell
@@ -48,6 +48,18 @@ jobs:
           }
           & $env:TRIAL_PYTHON docs/experiments/run_defense_models.py --run-id $runId --matlab $matlab -- @selected
           exit $LASTEXITCODE
+      - name: Plot master vs MATLAB
+        if: always()
+        shell: powershell
+        run: |
+          $runId = "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          & $env:TRIAL_PYTHON docs/experiments/plot_results.py --run-id $runId
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: defense-model-comparison-plots
+          path: docs/experiments/*/build/${{ github.run_id }}-${{ github.run_attempt }}/*_comparison.png
+          if-no-files-found: warn
       - name: Summarize observed results
         if: always()
         shell: powershell
